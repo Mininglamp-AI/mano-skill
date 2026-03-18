@@ -22,14 +22,14 @@ jobs:
           path: fty-nb-macos-arm64.tar.gz
 
   build-macos-x86_64:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller fty-nb.spec
+      - run: arch -x86_64 pip install -r requirements.txt pyinstaller
+      - run: arch -x86_64 pyinstaller fty-nb.spec --target-arch x86_64
       - run: tar -czf fty-nb-macos-x86_64.tar.gz -C dist fty-nb
       - uses: actions/upload-artifact@v4
         with:
