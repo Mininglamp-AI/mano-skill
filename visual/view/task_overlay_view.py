@@ -162,6 +162,7 @@ class TaskOverlayView:
             wrap="word"
         )
         self.log_text.pack(fill="both", expand=True, padx=14, pady=(8, 0))
+        self.log_text.configure(state="disabled")
 
         # ========== Core Change: Refactor Button Layout ==========
         # Create button container (for implementing two buttons with equal width)
@@ -275,12 +276,14 @@ class TaskOverlayView:
         if not self._ui_initialized:
             return
 
+        self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         if action:
             log_text = f"{TEXT_CONSTANTS['ACTION_PREFIX']}{action}"
             if reasoning.strip():
                 log_text += f"\n{TEXT_CONSTANTS['REASONING_PREFIX']}{reasoning}"
             self.log_text.insert("1.0", log_text)
+        self.log_text.configure(state="disabled")
 
     # ========== Core Change: Update Status UI (New call_user handling) ==========
     def _update_status_ui(self, status: str, error_msg: Optional[str] = None):
@@ -310,6 +313,8 @@ class TaskOverlayView:
                 command=self.on_close_command,
                 state="normal"
             )
+            # Auto close after 5 seconds
+            self.root.after(5000, self._auto_close)
         elif status == TASK_STATUS["STOPPED"]:
             self.status_label.configure(text=TEXT_CONSTANTS["STOPPED_TEXT"])
             # Restore to single button (close button)
@@ -322,8 +327,10 @@ class TaskOverlayView:
         elif status == TASK_STATUS["ERROR"]:
             self.status_label.configure(text=TEXT_CONSTANTS["ERROR_TEXT"])
             if error_msg:
+                self.log_text.configure(state="normal")
                 self.log_text.delete("1.0", "end")
                 self.log_text.insert("1.0", error_msg)
+                self.log_text.configure(state="disabled")
             # Restore to single button (close button)
             self._switch_to_single_button()
             self.stop_button.configure(
@@ -429,6 +436,8 @@ class TaskOverlayView:
             self.root.attributes("-topmost", True)
             # Force refresh
             self.root.update()
+            # Periodically re-assert topmost
+            self._keep_on_top()
             print("UI window displayed")
         except Exception as e:
             print(f"Failed to show window: {e}")
@@ -436,17 +445,34 @@ class TaskOverlayView:
 
     def close(self):
         """Close window"""
-        self._stop_blink()
-        if not self.root:
+        if not self._ui_initialized or not self.root:
             return
+
+        self._ui_initialized = False
+        self._stop_blink()
 
         try:
             self.root.quit()
-            self.root.destroy()
-            self._ui_initialized = False
-            print("UI window closed")
-        except Exception as e:
-            print(f"Failed to close window: {e}")
+            self.root.after(100, self.root.destroy)
+        except Exception:
+            pass
+        print("UI window closed")
+
+    def _keep_on_top(self):
+        """Periodically re-assert topmost to prevent being covered"""
+        if not self._ui_initialized or not self.root:
+            return
+        try:
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(2000, self._keep_on_top)
+        except Exception:
+            pass
+
+    def _auto_close(self):
+        """Auto close window after task completion"""
+        if self._ui_initialized and self.on_close_command:
+            self.on_close_command()
 
     def run_mainloop(self):
         """Run UI main loop"""

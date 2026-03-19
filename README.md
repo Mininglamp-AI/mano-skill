@@ -5,7 +5,7 @@ Desktop GUI automation driven by natural language. Captures screenshots, sends t
 ## How It Works
 
 ```
-User ──► Local client ──► Cloud Server ──► local client executes action
+User ──► Local client ──► Cloud Server ──► Local client executes action
               │                         │
          screenshot               model selection
                                        │
