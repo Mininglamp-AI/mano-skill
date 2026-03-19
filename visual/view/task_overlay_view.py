@@ -324,6 +324,8 @@ class TaskOverlayView:
                 command=self.on_close_command,
                 state="normal"
             )
+            # Auto close after 5 seconds
+            self.root.after(5000, self._auto_close)
         elif status == TASK_STATUS["ERROR"]:
             self.status_label.configure(text=TEXT_CONSTANTS["ERROR_TEXT"])
             if error_msg:
@@ -338,6 +340,8 @@ class TaskOverlayView:
                 command=self.on_close_command,
                 state="normal"
             )
+            # Auto close after 5 seconds
+            self.root.after(5000, self._auto_close)
         elif status == TASK_STATUS["CALL_USER"]:
             # Core change: show two buttons in call_user state
             self.status_label.configure(text="Pending Confirmation")

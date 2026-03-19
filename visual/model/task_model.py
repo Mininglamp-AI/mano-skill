@@ -83,6 +83,9 @@ class TaskModel:
             reasoning=reasoning,
             action_meta=meta or {}
         )
+        print(f"[step {step_idx}] Action: {action_desc}")
+        if reasoning:
+            print(f"[step {step_idx}] Reasoning: {reasoning}")
         self._notify_state_changed()
 
     # ========== State Management ==========
@@ -91,6 +94,7 @@ class TaskModel:
         self.state.status = TASK_STATUS["COMPLETED"]
         self.state.is_running = False
         self.stop_event.set()
+        self._print_summary("COMPLETED")
         self._notify_state_changed()
 
     def mark_stopped(self):
@@ -98,6 +102,7 @@ class TaskModel:
         self.state.status = TASK_STATUS["STOPPED"]
         self.state.is_running = False
         self.stop_event.set()
+        self._print_summary("STOPPED")
         self._notify_state_changed()
 
     def mark_error(self, error_msg: str):
@@ -106,7 +111,22 @@ class TaskModel:
         self.state.error_msg = error_msg
         self.state.is_running = False
         self.stop_event.set()
+        self._print_summary("ERROR", error_msg)
         self._notify_state_changed()
+
+    def _print_summary(self, final_status: str, error_msg: str = ""):
+        """Print task summary to stdout for agent consumption"""
+        print(f"\n{'='*50}")
+        print(f"Task: {self.state.task_name}")
+        print(f"Status: {final_status}")
+        print(f"Total steps: {self.state.progress.step_idx}")
+        if self.state.progress.action:
+            print(f"Last action: {self.state.progress.action}")
+        if self.state.progress.reasoning:
+            print(f"Last reasoning: {self.state.progress.reasoning}")
+        if error_msg:
+            print(f"Error: {error_msg}")
+        print(f"{'='*50}\n")
 
     def mark_call_user(self):
         """Mark task requires user intervention"""
@@ -177,7 +197,8 @@ class TaskModel:
             )
             resp.raise_for_status()
             self.state.session_id = resp.json()["session_id"]
-            self.update_progress(0, "Initializing", "Initializing sesssion connection")
+            print(f"Session created: {self.state.session_id}")
+            self.update_progress(0, "Initializing", "Initializing session connection")
 
         except Exception as e:
             raise RuntimeError(f"Failed to create session: {e}")
@@ -285,6 +306,6 @@ class TaskModel:
                 json={},
                 timeout=AUTOMATION_CONFIG["CLOSE_SESSION_TIMEOUT"]
             )
-            self.update_progress(self.state.progress.step_idx, "Close session", "Clean up server session resources")
+            #self.update_progress(self.state.progress.step_idx, "Close session", "Clean up server session resources")
         except Exception as e:
             print(f"Failed to close session: {e}")

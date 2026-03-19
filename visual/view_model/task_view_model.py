@@ -162,10 +162,10 @@ class TaskViewModel:
                 return
 
             # Handle state after thread ends
-            if self.model.stop_event.is_set() and self.model.state.status != TASK_STATUS["COMPLETED"]:
-                self.model.mark_stopped()
-            elif self.model.state.status == TASK_STATUS["ERROR"]:
+            if self.model.state.status in (TASK_STATUS["COMPLETED"], TASK_STATUS["ERROR"], TASK_STATUS["STOPPED"]):
                 self.on_model_state_changed(self.model.state)
+            elif self.model.stop_event.is_set():
+                self.model.mark_stopped()
 
         self.view.root.after(ANIMATION_CONFIG["POLL_INTERVAL"], poll_thread)
 
