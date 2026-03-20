@@ -44,7 +44,7 @@ class TaskModel:
             self._on_state_changed(self.state)
 
     # ========== Initialization Methods ==========
-    def init_task(self, task_name: str, server_url: Optional[str] = None, expected_result: Optional[str] = None):
+    def init_task(self, task_name: str, server_url: Optional[str] = None, expected_result: Optional[str] = None, session_id: Optional[str] = None):
         """Initialize automation task"""
         # Basic configuration
         self.state.task_name = task_name
@@ -57,6 +57,10 @@ class TaskModel:
         # Device and platform information
         self.state.device_id = get_or_create_device_id()
         self.state.platform_tag = platform.system()
+        
+        # Pre-created session (from vla.py)
+        if session_id:
+            self.state.session_id = session_id
 
         # Server URL
         if server_url:
@@ -178,11 +182,14 @@ class TaskModel:
         print(f"Expected result: {self.expected_result}")
 
         try:
-            # 1. Create session
-            self._create_session()
+            # 1. Create session (skip if already created by vla.py)
+            if not self.state.session_id:
+                self._create_session()
 
             if not self.state.session_id:
                 raise RuntimeError("Failed to create session, session_id not obtained")
+            
+            self.update_progress(0, "Initializing", "Initializing session connection")
 
             # 2. Execute task step loop
             self._execute_task_steps()
@@ -219,9 +226,14 @@ class TaskModel:
                 timeout=AUTOMATION_CONFIG["SESSION_TIMEOUT"]
             )
             resp.raise_for_status()
-            self.state.session_id = resp.json()["session_id"]
+            data = resp.json()
+            
+            # Check if session was reused (another task is already running)
+            if data.get("reused", False):
+                raise RuntimeError(f"Another task is already running on this device (session: {data['session_id']}). Use 'python3 -m visual.vla stop' to stop it first.")
+            
+            self.state.session_id = data["session_id"]
             print(f"Session created: {self.state.session_id}")
-            self.update_progress(0, "Initializing", "Initializing session connection")
 
         except Exception as e:
             raise RuntimeError(f"Failed to create session: {e}")

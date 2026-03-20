@@ -170,7 +170,7 @@ class TaskViewModel:
         self.view.root.after(ANIMATION_CONFIG["POLL_INTERVAL"], poll_thread)
 
     # ========== Business Methods ==========
-    def init_task(self, task_name: str, server_url: Optional[str] = None, expected_result: Optional[str] = None) -> bool:
+    def init_task(self, task_name: str, server_url: Optional[str] = None, expected_result: Optional[str] = None, session_id: Optional[str] = None) -> bool:
         """Initialize automation task"""
         try:
             import customtkinter as ctk
@@ -178,7 +178,7 @@ class TaskViewModel:
             ctk.set_default_color_theme("dark-blue")
 
             # Initialize Model
-            self.model.init_task(task_name, server_url, expected_result=expected_result)
+            self.model.init_task(task_name, server_url, expected_result=expected_result, session_id=session_id)
 
             # Initialize View
             self.view.show()
