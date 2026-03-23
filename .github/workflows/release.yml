@@ -14,12 +14,12 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller fty-nb.spec
-      - run: tar -czf fty-nb-macos-arm64.tar.gz -C dist/fty-nb .
+      - run: pyinstaller mano-cua.spec
+      - run: tar -czf mano-cua-macos-arm64.tar.gz -C dist/mano-cua .
       - uses: actions/upload-artifact@v4
         with:
-          name: fty-nb-macos-arm64
-          path: fty-nb-macos-arm64.tar.gz
+          name: mano-cua-macos-arm64
+          path: mano-cua-macos-arm64.tar.gz
 
   build-macos-x86_64:
     runs-on: macos-latest
@@ -29,12 +29,12 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install -r requirements.txt pyinstaller
-      - run: arch -x86_64 pyinstaller fty-nb.spec
-      - run: tar -czf fty-nb-macos-x86_64.tar.gz -C dist/fty-nb .
+      - run: arch -x86_64 pyinstaller mano-cua.spec
+      - run: tar -czf mano-cua-macos-x86_64.tar.gz -C dist/mano-cua .
       - uses: actions/upload-artifact@v4
         with:
-          name: fty-nb-macos-x86_64
-          path: fty-nb-macos-x86_64.tar.gz
+          name: mano-cua-macos-x86_64
+          path: mano-cua-macos-x86_64.tar.gz
 
   build-linux-x86_64:
     runs-on: ubuntu-latest
@@ -44,12 +44,12 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller fty-nb.spec
-      - run: tar -czf fty-nb-linux-x86_64.tar.gz -C dist/fty-nb .
+      - run: pyinstaller mano-cua.spec
+      - run: tar -czf mano-cua-linux-x86_64.tar.gz -C dist/mano-cua .
       - uses: actions/upload-artifact@v4
         with:
-          name: fty-nb-linux-x86_64
-          path: fty-nb-linux-x86_64.tar.gz
+          name: mano-cua-linux-x86_64
+          path: mano-cua-linux-x86_64.tar.gz
 
   build-windows:
     runs-on: windows-latest
@@ -59,13 +59,13 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller fty-nb.spec
-      - run: Compress-Archive -Path dist/fty-nb/* -DestinationPath fty-nb-windows.zip
+      - run: pyinstaller mano-cua.spec
+      - run: Compress-Archive -Path dist/mano-cua/* -DestinationPath mano-cua-windows.zip
         shell: pwsh
       - uses: actions/upload-artifact@v4
         with:
-          name: fty-nb-windows
-          path: fty-nb-windows.zip
+          name: mano-cua-windows
+          path: mano-cua-windows.zip
 
   release:
     needs: [build-macos-arm64, build-macos-x86_64, build-linux-x86_64, build-windows]
@@ -103,8 +103,8 @@ jobs:
           VERSION="${GITHUB_REF_NAME}"
           VERSION_NUM="${VERSION#v}"
           mkdir -p Formula
-          cat > Formula/fty-nb.rb << 'FORMULA_EOF'
-          class FtyNb < Formula
+          cat > Formula/mano-cua.rb << 'FORMULA_EOF'
+          class ManoCua < Formula
             desc "VLA Desktop Automation Client"
             homepage "https://github.com/HanningWang/mano-skill"
             url "https://github.com/HanningWang/mano-skill/archive/refs/tags/VERSION_PLACEHOLDER.tar.gz"
@@ -119,7 +119,7 @@ jobs:
               system "python3.13", "-m", "venv", venv
               system venv/"bin/pip", "install", "-r", "requirements.txt"
               (venv/"src").install Dir["visual"]
-              (bin/"fty-nb").write <<~SH
+              (bin/"mano-cua").write <<~SH
                 #!/bin/bash
                 export PYTHONPATH="#{venv}/src"
                 exec "#{venv}/bin/python3" "#{venv}/src/visual/vla.py" "$@"
@@ -127,18 +127,18 @@ jobs:
             end
 
             test do
-              assert_match "usage", shell_output("#{bin}/fty-nb --help", 2)
+              assert_match "usage", shell_output("#{bin}/mano-cua --help", 2)
             end
           end
           FORMULA_EOF
-          sed -i "s|VERSION_PLACEHOLDER|${VERSION}|g" Formula/fty-nb.rb
-          sed -i "s|VERSION_NUM_PLACEHOLDER|${VERSION_NUM}|g" Formula/fty-nb.rb
-          sed -i "s|SHA256_PLACEHOLDER|${{ steps.sha.outputs.source }}|g" Formula/fty-nb.rb
+          sed -i "s|VERSION_PLACEHOLDER|${VERSION}|g" Formula/mano-cua.rb
+          sed -i "s|VERSION_NUM_PLACEHOLDER|${VERSION_NUM}|g" Formula/mano-cua.rb
+          sed -i "s|SHA256_PLACEHOLDER|${{ steps.sha.outputs.source }}|g" Formula/mano-cua.rb
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/fty-nb.rb
-          git commit -m "Update fty-nb to ${GITHUB_REF_NAME}"
+          git add Formula/mano-cua.rb
+          git commit -m "Update mano-cua to ${GITHUB_REF_NAME}"
           git push

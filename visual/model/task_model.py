@@ -223,7 +223,7 @@ class TaskModel:
                 timeout=AUTOMATION_CONFIG["SESSION_TIMEOUT"]
             )
             if resp.status_code == 409:
-                raise RuntimeError("Another task is already running on this device. Use 'fty-nb stop' to stop it first.")
+                raise RuntimeError("Another task is already running on this device. Use 'mano-cua stop' to stop it first.")
 
             resp.raise_for_status()
             data = resp.json()

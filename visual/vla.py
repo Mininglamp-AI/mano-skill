@@ -64,7 +64,7 @@ def run_task(task: str, expected_result: str = None):
         )
         if resp.status_code == 409:
             print(f"Error: Another task is already running on this device.")
-            print(f"Use 'fty-nb stop' to stop it first.")
+            print(f"Use 'mano-cua stop' to stop it first.")
             return 1
 
         resp.raise_for_status()

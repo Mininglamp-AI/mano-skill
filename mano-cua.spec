@@ -31,7 +31,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='fty-nb',
+    name='mano-cua',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -50,5 +50,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='fty-nb',
+    name='mano-cua',
 )

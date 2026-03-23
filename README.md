@@ -15,7 +15,7 @@ User ──► Local client ──► Cloud Server ──► Local client execut
                     (fast, lightweight)    (complex reasoning)
 ```
 
-At each step, fty-nb captures the current screenshot and sends it along with the task description to the cloud server. The server analyzes the task and **automatically selects the most suitable model**:
+At each step, mano-cua captures the current screenshot and sends it along with the task description to the cloud server. The server analyzes the task and **automatically selects the most suitable model**:
 
 - **Mano Model** — optimized for straightforward, repetitive GUI tasks. Low latency, high throughput. Ideal for simple clicks, form filling, and navigation.
 - **Claude CUA (Computer Use Agent)** — handles tasks that require deeper visual understanding and multi-step reasoning. Used when the task involves complex layouts, ambiguous UI elements, or decision-making.
@@ -26,20 +26,20 @@ The server evaluates task complexity in real time and routes accordingly, balanc
 
 ```bash
 brew tap HanningWang/tap
-brew install fty-nb
+brew install mano-cua
 ```
 
 ## Usage
 
 ```bash
-fty-nb run "your task description"
+mano-cua run "your task description"
 ```
 
 ## Examples
 
 ```bash
-fty-nb run "Open WeChat and tell FTY that the meeting is postponed"
-fty-nb run "Search for AI news in Xiaohongshu and show the first post"
+mano-cua run "Open WeChat and tell FTY that the meeting is postponed"
+mano-cua run "Search for AI news in Xiaohongshu and show the first post"
 ```
 
 ## Supported Actions
@@ -61,7 +61,7 @@ A small UI panel is displayed on the top-right corner of the screen to track and
 
 ## Important Notes
 
-- **Do not use the mouse or keyboard during the task.** Manual input while fty-nb is running may cause unexpected behavior.
+- **Do not use the mouse or keyboard during the task.** Manual input while mano-cua is running may cause unexpected behavior.
 - **Multiple displays:** only the primary display is used. All mouse movements, clicks, and screenshots are restricted to that display.
 
 ## Platform Support
