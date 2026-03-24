@@ -106,8 +106,21 @@ class TaskModel:
         self.state.status = TASK_STATUS["STOPPED"]
         self.state.is_running = False
         self.stop_event.set()
+        # Immediately tell server to stop, don't wait for step loop to finish
+        self._stop_device_session()
         self._print_summary("STOPPED_BY_USER")
         self._notify_state_changed()
+
+    def _stop_device_session(self):
+        """Tell server to stop the active session for this device immediately"""
+        try:
+            requests.post(
+                f"{self.server_url}/v1/devices/{self.state.device_id}/stop",
+                json={},
+                timeout=5
+            )
+        except Exception:
+            pass  # Best effort
 
     def mark_error(self, error_msg: str):
         """Mark task as error"""

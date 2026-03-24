@@ -95,46 +95,43 @@ class TaskViewModel:
                 )
                 response.raise_for_status()  # Throw HTTP exceptions (4xx/5xx)
 
-                # 4. 【第二步】解析并校验接口响应（确认服务端处理成功）
+                # 4. Parse and validate API response
                 resp_data = response.json() if response.content else {"ok": True}
                 if not resp_data.get("ok"):
-                    raise RuntimeError(f"接口返回失败：{resp_data.get('detail', '未知错误')}")
+                    raise RuntimeError(f"API returned failure: {resp_data.get('detail', 'unknown error')}")
 
-                print(f"✅ API调用成功，服务端会话 {session_id} 已更新为RUNNING状态")
+                print(f"API call succeeded, session {session_id} updated to RUNNING")
 
-                # 5. 【第三步】仅当API调用完全成功后，再恢复客户端线程
-                self.model.resume_task()  # 清空stop_event，唤醒阻塞的任务线程
+                # 5. Resume client thread only after API call fully succeeds
+                self.model.resume_task()
 
-                # 6. 同步Model状态（确保客户端与服务端状态一致）
+                # 6. Sync model state with server
                 self.model.state.status = TASK_STATUS["RUNNING"]
                 self.model.state.is_running = True
 
-                # 7. 通知View更新状态（切换回单按钮布局）
+                # 7. Notify view to update state
                 self.on_model_state_changed(self.model.state)
 
-                # 8. 更新UI日志和状态
+                # 8. Update UI log and status
                 self.view.root.after(0, lambda: [
                     self.view.log_text.insert(
                         "1.0",
-                        f"✅ 用户确认成功，会话 {session_id} 已恢复运行\n{self.view.log_text.get('1.0', 'end')}"
+                        f"User confirmed, session {session_id} resumed\n{self.view.log_text.get('1.0', 'end')}"
                     ),
-                    self.view.status_label.configure(text="继续执行中..."),
-                    # 恢复停止按钮状态（继续按钮由View自动切换）
+                    self.view.status_label.configure(text="Resuming..."),
                     self.view.stop_button.configure(state="normal")
                 ])
 
-                print(f"✅ 客户端线程已恢复，会话 {session_id} 继续执行后续步骤")
+                print(f"Client thread resumed, session {session_id} continuing")
 
             except requests.exceptions.RequestException as e:
-                # 网络/接口异常：不恢复线程，直接提示错误
-                error_msg = f"调用go_no接口失败：{str(e)}"
-                print(f"❌ {error_msg} → 不恢复客户端线程")
+                error_msg = f"go_no API call failed: {str(e)}"
+                print(f"{error_msg}, not resuming client thread")
                 self._handle_continue_error(error_msg)
 
             except Exception as e:
-                # 通用异常：不恢复线程，直接提示错误
-                error_msg = f"处理继续命令失败：{str(e)}"
-                print(f"❌ {error_msg} → 不恢复客户端线程")
+                error_msg = f"Continue command failed: {str(e)}"
+                print(f"{error_msg}, not resuming client thread")
                 import traceback
                 traceback.print_exc()
                 self._handle_continue_error(error_msg)
