@@ -10,7 +10,7 @@ from visual.computer.computer_action_executor import ComputerActionExecutor
 from visual.config.visual_config import AUTOMATION_CONFIG, TASK_STATUS
 from visual.model.task_progress import TaskProgress
 from visual.model.task_state import TaskState
-from visual.computer.computer_use_util import screenshot_to_bytes, b64_png, get_or_create_device_id, \
+from visual.computer.computer_use_util import screenshot_to_bytes, get_or_create_device_id, \
     make_tool_result
 
 
@@ -258,13 +258,9 @@ class TaskModel:
                 self.mark_stopped()
                 break
 
-            # 2. Get current screenshot
-            shot = screenshot_to_bytes()
-
-            # 3. Build request payload
+            # 2. Build request payload (screenshots flow through tool_results only)
             payload = {
                 "request_id": str(uuid.uuid4()),
-                "screenshot_b64": b64_png(shot),
                 "tool_results": tool_results,
             }
 
