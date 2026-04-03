@@ -269,9 +269,9 @@ class TaskOverlayView:
             self.minimize_button.pack_forget()
             self.status_label.pack_forget()
             self.top_frame.pack_configure(padx=6, pady=(2, 2))
-            self.status_label.pack(side="left", padx=(2, 2))
             self.minimize_button.configure(text="+")
-            self.minimize_button.pack(side="left", padx=(0, 2))
+            self.minimize_button.pack(side="right", padx=(0, 2))
+            self.status_label.pack(side="left", padx=(2, 2))
             # Move to bottom-right corner
             try:
                 screen_width = self.root.winfo_screenwidth()
