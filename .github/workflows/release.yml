@@ -89,13 +89,13 @@ jobs:
         id: sha
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          curl -sL "https://github.com/HanningWang/mano-skill/archive/refs/tags/${VERSION}.tar.gz" -o source.tar.gz
+          curl -sL "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${VERSION}.tar.gz" -o source.tar.gz
           echo "source=$(sha256sum source.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Checkout homebrew-tap
         uses: actions/checkout@v4
         with:
-          repository: HanningWang/homebrew-tap
+          repository: ${{ github.repository_owner }}/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Update formula
@@ -106,8 +106,8 @@ jobs:
           cat > Formula/mano-cua.rb << 'FORMULA_EOF'
           class ManoCua < Formula
             desc "VLA Desktop Automation Client"
-            homepage "https://github.com/HanningWang/mano-skill"
-            url "https://github.com/HanningWang/mano-skill/archive/refs/tags/VERSION_PLACEHOLDER.tar.gz"
+            homepage "https://github.com/OWNER_PLACEHOLDER/mano-skill"
+            url "https://github.com/OWNER_PLACEHOLDER/mano-skill/archive/refs/tags/VERSION_PLACEHOLDER.tar.gz"
             sha256 "SHA256_PLACEHOLDER"
             version "VERSION_NUM_PLACEHOLDER"
 
@@ -131,6 +131,8 @@ jobs:
             end
           end
           FORMULA_EOF
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          sed -i "s|OWNER_PLACEHOLDER|${OWNER}|g" Formula/mano-cua.rb
           sed -i "s|VERSION_PLACEHOLDER|${VERSION}|g" Formula/mano-cua.rb
           sed -i "s|VERSION_NUM_PLACEHOLDER|${VERSION_NUM}|g" Formula/mano-cua.rb
           sed -i "s|SHA256_PLACEHOLDER|${{ steps.sha.outputs.source }}|g" Formula/mano-cua.rb
@@ -140,5 +142,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/mano-cua.rb
+          git diff --cached --quiet && echo "Formula already up to date" && exit 0
           git commit -m "Update mano-cua to ${GITHUB_REF_NAME}"
           git push
