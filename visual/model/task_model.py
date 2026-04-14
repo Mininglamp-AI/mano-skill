@@ -218,8 +218,10 @@ class TaskModel:
 
         except Exception as e:
             self.mark_error(f"Task execution failed: {str(e)}")
-        # Close session for error/stopped cases (skip eval)
-        self._close_session(skip_eval=True)
+        # Close session for error/stopped/fail cases
+        # Still run eval if expected_result is set (agent FAIL/INFEASIBLE should be judged)
+        skip = not bool(self.expected_result)
+        self._close_session(skip_eval=skip)
 
     def _create_session(self):
         """Create server session"""
