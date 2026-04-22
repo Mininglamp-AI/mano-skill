@@ -108,7 +108,7 @@ def main():
     parser.add_argument("task", nargs="?", help="Task description (required for 'run')")
     parser.add_argument("--expected-result", help="Expected result description for validation", default=None)
     parser.add_argument("--minimize", help="Start with minimized UI panel", action="store_true", default=False)
-    parser.add_argument("--max-steps", help="Maximum number of steps before auto-closing", type=int, default=60)
+    parser.add_argument("--max-steps", help="Maximum number of steps before auto-closing", type=int, default=100)
 
     args = parser.parse_args()
 
