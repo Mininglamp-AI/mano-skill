@@ -1,13 +1,11 @@
 import platform
 import threading
 import time
-import uuid
 from typing import Optional, Callable, Dict, Any, List
 
-import requests
-
+from visual.agents.base import BaseAgent
 from visual.computer.computer_action_executor import ComputerActionExecutor
-from visual.config.visual_config import AUTOMATION_CONFIG, TASK_STATUS, API_HEADERS
+from visual.config.visual_config import AUTOMATION_CONFIG, TASK_STATUS
 from visual.model.task_progress import TaskProgress
 from visual.model.task_state import TaskState
 from visual.computer.computer_use_util import screenshot_to_bytes, get_or_create_device_id, \
@@ -30,7 +28,7 @@ class TaskModel:
         # Business components
         self.on_minimize_panel: Optional[Callable] = None
         self.executor: Optional[ComputerActionExecutor] = None
-        self.server_url = AUTOMATION_CONFIG["BASE_URL"]
+        self.agent: Optional[BaseAgent] = None
         self.expected_result = None
         self.max_steps = None
         self.eval_result = None
@@ -46,10 +44,11 @@ class TaskModel:
             self._on_state_changed(self.state)
 
     # ========== Initialization Methods ==========
-    def init_task(self, task_name: str, server_url: Optional[str] = None, expected_result: Optional[str] = None, session_id: Optional[str] = None, max_steps: int = None):
+    def init_task(self, task_name: str, agent: BaseAgent, expected_result: Optional[str] = None, max_steps: int = None):
         """Initialize automation task"""
         # Basic configuration
         self.state.task_name = task_name
+        self.agent = agent
         self.expected_result = expected_result
         self.max_steps = max_steps
         self.state.status = TASK_STATUS["RUNNING"]
@@ -60,14 +59,6 @@ class TaskModel:
         # Device and platform information
         self.state.device_id = get_or_create_device_id()
         self.state.platform_tag = platform.system()
-        
-        # Pre-created session (from vla.py)
-        if session_id:
-            self.state.session_id = session_id
-
-        # Server URL
-        if server_url:
-            self.server_url = server_url
 
         # Initialize executor
         self.executor = ComputerActionExecutor(on_minimize_panel=self.on_minimize_panel)
@@ -109,21 +100,11 @@ class TaskModel:
         self.state.status = TASK_STATUS["STOPPED"]
         self.state.is_running = False
         self.stop_event.set()
-        # Immediately tell server to stop, don't wait for step loop to finish
-        self._stop_device_session()
+        # Tell agent to stop (cloud: server API, local: no-op)
+        if self.agent:
+            self.agent.stop()
         self._print_summary("STOPPED_BY_USER")
         self._notify_state_changed()
-
-    def _stop_device_session(self):
-        """Tell server to stop the active session for this device immediately"""
-        try:
-            requests.post(
-                f"{self.server_url}/v1/devices/{self.state.device_id}/stop",
-                json={},
-                timeout=5
-            )
-        except Exception:
-            pass  # Best effort
 
     def mark_error(self, error_msg: str):
         """Mark task as error"""
@@ -195,75 +176,39 @@ class TaskModel:
         print(f"Expected result: {self.expected_result}")
 
         try:
-            # 1. Create session (skip if already created by vla.py)
-            if not self.state.session_id:
-                self._create_session()
-
-            if not self.state.session_id:
-                raise RuntimeError("Failed to create session, session_id not obtained")
-            
             self.update_progress(0, "Initializing", "Initializing session connection")
 
-            # 2. Execute task step loop
+            # Execute task step loop
             self._execute_task_steps()
 
-            # 3. Max steps reached
+            # Max steps reached
             if self.state.status == TASK_STATUS["MAX_STEP_REACHED"]:
                 self.state.is_running = False
                 self.stop_event.set()
                 self._print_summary("MAX_STEP_REACHED")
                 self._notify_state_changed()
-                skip = not bool(self.expected_result)
+                skip = not (self.expected_result and self.agent.agent_type == "cloud")
                 if not skip:
                     self._mark_evaluating()
-                self._close_session(close_reason="MAX_STEP_REACHED", skip_eval=skip)
+                self.eval_result = self.agent.close(skip_eval=skip, close_reason="MAX_STEP_REACHED")
                 return
 
-            # 4. Normal completion
+            # Normal completion
             if self.state.is_running and self.state.status != TASK_STATUS["ERROR"]:
-                if self.expected_result:
+                if self.expected_result and self.agent.agent_type == "cloud":
                     self._mark_evaluating()
-                    self._close_session()
+                    self.eval_result = self.agent.close()
                     self.mark_completed()
                 else:
                     self.mark_completed()
-                    self._close_session()
+                    self.agent.close(skip_eval=True)
                 return
 
         except Exception as e:
             self.mark_error(f"Task execution failed: {str(e)}")
         # Close session for error/stopped/fail cases
-        # Still run eval if expected_result is set (agent FAIL/INFEASIBLE should be judged)
-        skip = not bool(self.expected_result)
-        self._close_session(skip_eval=skip)
-
-    def _create_session(self):
-        """Create server session"""
-        try:
-            body = {
-                "device_id": self.state.device_id,
-                "platform": self.state.platform_tag,
-                "task": self.state.task_name
-            }
-            if self.expected_result:
-                body["expected_result"] = self.expected_result
-            resp = requests.post(
-                f"{self.server_url}/v1/sessions",
-                json=body,
-                headers=API_HEADERS,
-                timeout=AUTOMATION_CONFIG["SESSION_TIMEOUT"]
-            )
-            if resp.status_code == 409:
-                raise RuntimeError("Another task is already running on this device. Use 'mano-cua stop' to stop it first.")
-
-            resp.raise_for_status()
-            data = resp.json()
-
-            self.state.session_id = data["session_id"]
-            print(f"Session created: {self.state.session_id}")
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to create session: {e}")
+        skip = not (self.expected_result and self.agent.agent_type == "cloud")
+        self.eval_result = self.agent.close(skip_eval=skip)
 
     def _execute_task_steps(self):
         """Execute task step loop"""
@@ -276,45 +221,30 @@ class TaskModel:
                 self.mark_stopped()
                 break
 
-            # 2. Build request payload (screenshots flow through tool_results only)
-            payload = {
-                "request_id": str(uuid.uuid4()),
-                "tool_results": tool_results,
-            }
-
-            # 4. Request next operation
+            # 2. Request next operation via agent
             try:
-                resp = requests.post(
-                    f"{self.server_url}/v1/sessions/{self.state.session_id}/step",
-                    json=payload,
-                    timeout=AUTOMATION_CONFIG["STEP_TIMEOUT"]
+                reasoning, actions, status, action_desc = self.agent.predict(
+                    task_instruction=self.state.task_name,
+                    tool_results=tool_results,
                 )
-                resp.raise_for_status()
-                data = resp.json()
             except Exception as e:
                 raise RuntimeError(f"Request step failed: {e}")
 
-            # 5. Parse response data
-            reasoning = data.get("reasoning", "")
-            actions = data.get("actions", [])
-            status = (data.get("status") or "RUNNING").upper()
-            action_desc = data.get("action_desc", "")
-
-            # 6. Handle stop status
+            # 3. Handle stop status
             if status == "STOP":
                 self.mark_stopped()
                 break
 
-            # 7. Update UI progress
+            # 4. Update UI progress
             if status == "MAX_STEP_REACHED":
                 action_desc = "Max steps reached"
             self.update_progress(step_idx, action_desc, reasoning)
 
-            # 8. Handle terminal status
+            # 5. Handle terminal status
             if status == "DONE":
                 break
             elif status == "FAIL":
-                self.mark_error("Server marked task as failed")
+                self.mark_error("Agent marked task as failed")
                 break
             elif status == "MAX_STEP_REACHED":
                 self.state.status = TASK_STATUS["MAX_STEP_REACHED"]
@@ -323,7 +253,7 @@ class TaskModel:
                 self.mark_call_user()
                 continue
 
-            # 9. Execute actions
+            # 6. Execute actions
             tool_results = []
             if not actions:
                 continue
@@ -361,23 +291,3 @@ class TaskModel:
                 print(f"Max steps ({self.max_steps}) reached, stopping task")
                 self.state.status = TASK_STATUS["MAX_STEP_REACHED"]
                 break
-
-    def _close_session(self, skip_eval: bool = False, close_reason: str = None):
-        """Close server session"""
-        if not self.state.session_id:
-            return
-
-        try:
-            params = f"skip_eval={str(skip_eval).lower()}"
-            if close_reason:
-                params += f"&close_reason={close_reason}"
-            resp = requests.post(
-                f"{self.server_url}/v1/sessions/{self.state.session_id}/close?{params}",
-                json={},
-                timeout=AUTOMATION_CONFIG["CLOSE_SESSION_TIMEOUT"]
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            self.eval_result = data.get("eval_result")
-        except Exception as e:
-            print(f"Failed to close session: {e}")

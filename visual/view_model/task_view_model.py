@@ -1,7 +1,7 @@
 import threading
 from typing import Optional
-import requests  # New: import requests library for API calls
 
+from visual.agents.base import BaseAgent
 from visual.config.visual_config import ANIMATION_CONFIG, TASK_STATUS, AUTOMATION_CONFIG
 from visual.model.task_model import TaskModel
 from visual.view.task_overlay_view import TaskOverlayView
@@ -50,94 +50,42 @@ class TaskViewModel:
 
     # ========== Core Change: Ensure API call succeeds before resuming thread ==========
     def on_continue_command(self):
-        """Handle user click 'agree and continue' business logic (call go_no API)"""
-        # Quick failure: task not running, return directly
+        """Handle user click 'agree and continue' — delegates to agent"""
         if not self._is_running:
-            print("❌ Task not running, cannot continue")
+            print("Task not running, cannot continue")
             self.view.root.after(0, lambda: self.view.continue_button.configure(
                 text="Agree and Continue", state="normal"
             ))
             return
 
-        # 1. Validate required parameters
-        session_id = self.model.state.session_id
-        if not session_id:
-            error_msg = "Session ID not obtained, cannot continue task"
-            print(f"❌ {error_msg}")
-            self.view.root.after(0, lambda: [
-                self.view.continue_button.configure(text="Agree and Continue", state="normal"),
-                self.view.log_text.insert("1.0", f"❌ Error: {error_msg}\n{self.view.log_text.get('1.0', 'end')}")
-            ])
+        agent = self.model.agent
+        if not agent:
+            self._handle_continue_error("No agent available")
             return
 
-        # Define core logic for API call (extracted as internal function for exception handling)
-        def call_go_no_api():
+        def call_agree():
             try:
-                # 2. Update UI button state (prevent duplicate clicks)
                 self.view.root.after(0, lambda: [
                     self.view.continue_button.configure(text="Submitting confirmation...", state="disabled"),
                     self.view.stop_button.configure(state="disabled"),
-                    self.view.log_text.insert(
-                        "1.0",
-                        f"🔄 Submitting user confirmation, session ID: {session_id}\n{self.view.log_text.get('1.0', 'end')}"
-                    )
                 ])
 
-                # 3. [First step] Call go_no API (prioritize ensuring server state update)
-                server_url = self.model.server_url or AUTOMATION_CONFIG["BASE_URL"]
-                api_url = f"{server_url}/v1/sessions/{session_id}/go_no"
+                agent.agree_to_continue()
 
-                # Configure request timeout and retry (enhance robustness)
-                response = requests.post(
-                    api_url,
-                    timeout=AUTOMATION_CONFIG["SESSION_TIMEOUT"],
-                    headers={"Content-Type": "application/json"}  # Explicitly specify Content-Type
-                )
-                response.raise_for_status()  # Throw HTTP exceptions (4xx/5xx)
-
-                # 4. Parse and validate API response
-                resp_data = response.json() if response.content else {"ok": True}
-                if not resp_data.get("ok"):
-                    raise RuntimeError(f"API returned failure: {resp_data.get('detail', 'unknown error')}")
-
-                print(f"API call succeeded, session {session_id} updated to RUNNING")
-
-                # 5. Resume client thread only after API call fully succeeds
                 self.model.resume_task()
-
-                # 6. Sync model state with server
                 self.model.state.status = TASK_STATUS["RUNNING"]
                 self.model.state.is_running = True
-
-                # 7. Notify view to update state
                 self.on_model_state_changed(self.model.state)
 
-                # 8. Update UI log and status
                 self.view.root.after(0, lambda: [
-                    self.view.log_text.insert(
-                        "1.0",
-                        f"User confirmed, session {session_id} resumed\n{self.view.log_text.get('1.0', 'end')}"
-                    ),
                     self.view.status_label.configure(text="Resuming..."),
-                    self.view.stop_button.configure(state="normal")
+                    self.view.stop_button.configure(state="normal"),
                 ])
 
-                print(f"Client thread resumed, session {session_id} continuing")
-
-            except requests.exceptions.RequestException as e:
-                error_msg = f"go_no API call failed: {str(e)}"
-                print(f"{error_msg}, not resuming client thread")
-                self._handle_continue_error(error_msg)
-
             except Exception as e:
-                error_msg = f"Continue command failed: {str(e)}"
-                print(f"{error_msg}, not resuming client thread")
-                import traceback
-                traceback.print_exc()
-                self._handle_continue_error(error_msg)
+                self._handle_continue_error(f"Continue command failed: {e}")
 
-        # Start API call (asynchronous execution, avoid blocking UI thread)
-        threading.Thread(target=call_go_no_api, daemon=True).start()
+        threading.Thread(target=call_agree, daemon=True).start()
 
     # ========== New: Unified Error Handling Method ==========
     def _handle_continue_error(self, error_msg):
@@ -167,7 +115,7 @@ class TaskViewModel:
         self.view.root.after(ANIMATION_CONFIG["POLL_INTERVAL"], poll_thread)
 
     # ========== Business Methods ==========
-    def init_task(self, task_name: str, server_url: Optional[str] = None, expected_result: Optional[str] = None, session_id: Optional[str] = None, max_steps: int = None) -> bool:
+    def init_task(self, task_name: str, agent: BaseAgent, expected_result: Optional[str] = None, max_steps: int = None) -> bool:
         """Initialize automation task"""
         try:
             import customtkinter as ctk
@@ -181,7 +129,7 @@ class TaskViewModel:
             self.model.on_minimize_panel = lambda: self.view.root.after(0, _minimize_if_needed)
 
             # Initialize Model
-            self.model.init_task(task_name, server_url, expected_result=expected_result, session_id=session_id, max_steps=max_steps)
+            self.model.init_task(task_name, agent, expected_result=expected_result, max_steps=max_steps)
 
             # Initialize View
             self.view.show()
