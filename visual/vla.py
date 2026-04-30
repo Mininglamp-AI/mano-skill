@@ -53,23 +53,41 @@ def _open_url_in_browser(url: str):
             subprocess.Popen(f'start "" "{url}"', shell=True)
         else:
             subprocess.Popen(["xdg-open", url])
-        time.sleep(2)  # wait for browser to load
+        time.sleep(4)
     except Exception as e:
         print(f"Warning: failed to open URL: {e}")
 
 
+def _open_app(app_name: str):
+    """Open an application (cross-platform)."""
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.Popen(["open", "-a", app_name])
+        elif system == "Windows":
+            subprocess.run(
+                ["powershell", "-Command", f'Start-Process "{app_name}"'],
+                shell=False, capture_output=True, text=True, timeout=10
+            )
+        else:
+            subprocess.Popen([app_name])
+        time.sleep(2)
+    except Exception as e:
+        print(f"Warning: failed to open app: {e}")
+
+
 def run_task(task: str, expected_result: str = None, minimize: bool = False,
              max_steps: int = None, local: bool = False, model_path: str = None,
-             url: str = None):
+             url: str = None, app: str = None):
     """Run an automation task"""
     from visual.config.visual_config import BASE_URL, AUTOMATION_CONFIG, API_HEADERS
     from visual.computer.computer_use_util import get_or_create_device_id
 
-    # Open URL before starting (both modes)
+    # Open app/URL before starting (both modes)
+    if app:
+        _open_app(app)
     if url:
         _open_url_in_browser(url)
-        if local:
-            time.sleep(2)  # extra wait for page load before first screenshot
 
     if local:
         # --- Local mode ---
@@ -291,6 +309,7 @@ def main():
     run_parser.add_argument("--local", help="Use local model inference (MLX)", action="store_true", default=False)
     run_parser.add_argument("--model-path", help="Local model weights path (overrides config)", default=None)
     run_parser.add_argument("--url", help="Open URL in browser before starting task", default=None)
+    run_parser.add_argument("--app", help="Open app before starting task (use macOS app name, e.g. 'Notes', 'Safari', 'Google Chrome')", default=None)
 
     # --- stop ---
     subparsers.add_parser("stop", help="Stop the current running task")
@@ -344,6 +363,7 @@ def main():
             local=args.local,
             model_path=args.model_path,
             url=args.url,
+            app=args.app,
         )
 
     return 1
