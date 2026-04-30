@@ -68,6 +68,8 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
     # Open URL before starting (both modes)
     if url:
         _open_url_in_browser(url)
+        if local:
+            time.sleep(2)  # extra wait for page load before first screenshot
 
     if local:
         # --- Local mode ---

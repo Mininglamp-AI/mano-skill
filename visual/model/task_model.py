@@ -4,6 +4,7 @@ import time
 from typing import Optional, Callable, Dict, Any, List
 
 from visual.agents.base import BaseAgent
+from visual.agents.key_normalizer import normalize_actions
 from visual.computer.computer_action_executor import ComputerActionExecutor
 from visual.config.visual_config import AUTOMATION_CONFIG, TASK_STATUS
 from visual.model.task_progress import TaskProgress
@@ -253,10 +254,12 @@ class TaskModel:
                 self.mark_call_user()
                 continue
 
-            # 6. Execute actions
+            # 6. Execute actions (normalize keys for platform before execution)
             tool_results = []
             if not actions:
                 continue
+
+            actions = normalize_actions(actions)
 
             for i, a in enumerate(actions):
                 tool_use_id = a.get("id")

@@ -63,6 +63,9 @@ finish() # The task is completed.
 ## Note
 - Use Chinese in `<think>` part.
 - Write a small plan and finally summarize your next action (with its target element) in one sentence in `<action_desp>` part.
+- Before using type(), always click the target input field first to ensure cursor focus is in the correct position.
+- When the task requires opening an app that is not visible on screen, use Spotlight: hotkey(key='ctrl space'), then type(content='app name'), then hotkey(key='enter').
+- To clear text in an input field, first click the field, then hotkey(key='ctrl a'), then hotkey(key='backspace').
 
 ## User Instruction:
 {instruction}
@@ -93,7 +96,7 @@ finish() # The task is completed.
 
         # W8A8 acceleration (config: auto/on/off, default auto)
         from visual.config.user_config import get_config
-        w8a8_mode = get_config("w8a8") or "auto"
+        w8a8_mode = get_config("w8a8") or "off"
         if w8a8_mode != "off":
             try:
                 import mlx.core as mx
@@ -144,28 +147,33 @@ finish() # The task is completed.
         response_text = self._infer(user_text, images)
         print(f"  [model output] {response_text}")
 
+        # Save raw response to file
+        self._save_raw_response(response_text)
+
         # 4. Parse response
         parsed = self._parse_response(response_text)
         think = parsed["think"]
         action_desp = parsed["action_desp"]
-        action = parsed["action"]
+        parsed_actions = parsed["actions"]
 
         # 5. Record prompt history
         if screenshot_b64:
             self.prompt_history.append({
-                "desc": action_desp or str(action),
+                "desc": action_desp or str(parsed_actions),
                 "screenshot_b64": screenshot_b64,
             })
 
         # 6. Convert to Claude-compatible actions and determine status
-        if action is None:
+        if not parsed_actions:
             actions = [{"action_type": "FAIL"}]
             status = "FAIL"
             action_str = "FAIL"
         else:
-            actions = self._convert_action(action)
+            actions = []
+            for a in parsed_actions:
+                actions.extend(self._convert_action(a))
             status = self._determine_status(actions)
-            action_str = self._format_action_desc(actions)
+            action_str = " → ".join(self._format_action_desc([a]) for a in actions)
 
         self.step_count += 1
         elapsed = time.time() - _t0
@@ -176,6 +184,13 @@ finish() # The task is completed.
     def close(self, skip_eval: bool = False, close_reason: Optional[str] = None) -> Optional[dict]:
         # Local mode: no server session to close, no eval
         return None
+
+    def _save_raw_response(self, text: str):
+        import json
+        log_path = os.path.expanduser("~/.mano/raw_responses.jsonl")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"step": self.step_count, "raw": text}, ensure_ascii=False) + "\n")
 
     def agree_to_continue(self) -> None:
         self.prompt_history.append({
@@ -293,8 +308,14 @@ finish() # The task is completed.
         think = self._extract_tag(text, "think") or ""
         action_desp = self._extract_tag(text, "action_desp") or ""
         action_raw = self._extract_tag(text, "action") or ""
-        action = self._parse_action(action_raw) if action_raw else None
-        return {"think": think.strip(), "action_desp": action_desp.strip(), "action": action}
+        actions = []
+        if action_raw:
+            # Match each action function call: name(...) allowing nested quotes/newlines
+            for m in re.finditer(r"(\w+\(.*?\))(?=\s*\n\s*\w+\(|\s*$)", action_raw.strip(), re.DOTALL):
+                parsed = self._parse_action(m.group(1).strip())
+                if parsed:
+                    actions.append(parsed)
+        return {"think": think.strip(), "action_desp": action_desp.strip(), "actions": actions}
 
     def _extract_tag(self, text: str, tag: str) -> Optional[str]:
         m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
@@ -357,6 +378,8 @@ finish() # The task is completed.
             return {"action": "wait", "duration": duration}
         if func_name == "finish":
             return {"action": "finish"}
+        if func_name == "open_url":
+            return {"action": "open_url", "url": kwargs.get("url", "")}
         if func_name == "stop":
             return {"action": "stop", "reason": kwargs.get("reason", "")}
         if func_name == "call_user":
@@ -401,6 +424,9 @@ finish() # The task is completed.
         if at in ("DONE", "FAIL", "CALL_USER"):
             return at
         inp = a.get("input", {})
+        name = a.get("name", "")
+        if name == "open_url":
+            return f"open_url(\"{inp.get('url', '')}\")"
         action = inp.get("action", "unknown")
         coord = inp.get("coordinate")
         if coord:
@@ -419,6 +445,13 @@ finish() # The task is completed.
 
         if act == "finish":
             return [{"action_type": "DONE"}]
+        if act == "open_url":
+            return [{
+                "name": "open_url",
+                "input": {"url": action.get("url", "")},
+                "id": str(uuid.uuid4()),
+                "action_type": "tool_use",
+            }]
         if act == "stop":
             return [{"action_type": "FAIL"}]
         if act == "call_user":
