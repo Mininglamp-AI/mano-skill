@@ -119,6 +119,24 @@ class TaskModel:
     def _print_summary(self, final_status: str, error_msg: str = ""):
         """Print task summary to stdout for agent consumption"""
         import json
+import re
+
+def _emoji_pattern():
+    import re
+    return re.compile(
+        "[\U0001F300-\U0001F64F\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251]+"
+    )
+
+def _safe_print(text):
+    try:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+    except UnicodeEncodeError:
+        sys.stdout.write(_emoji_pattern().sub("", text))
+        sys.stdout.flush()
+
         print(f"\n{'='*50}")
         print(f"Task: {self.state.task_name}")
         print(f"Status: {final_status}")
