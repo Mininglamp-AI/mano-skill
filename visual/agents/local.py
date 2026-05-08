@@ -32,11 +32,7 @@ class LocalAgent(BaseAgent):
 
     SYSTEM_PROMPT = "You are a helpful assistant."
 
-    INSTRUCTION_TEMPLATE = """\
-You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
-
-## OS Platform
-{platform}
+    INSTRUCTION_TEMPLATE = """You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 
 ## Output Format
 <think>思考过程</think>
@@ -45,6 +41,8 @@ You are a GUI agent. You are given a task and your action history, with screensh
 
 ## Action Space
 
+open_app(app_name='') # Open an application by name.
+open_url(url='') # Open a URL in the browser.
 hover(start_box='<|box_start|>(x1,y1)<|box_end|>')
 click(start_box='<|box_start|>(x1,y1)<|box_end|>')
 triple_click(start_box='<|box_start|>(x1,y1)<|box_end|>') left click at the coordinate (x1,y1) three times
@@ -63,12 +61,10 @@ finish() # The task is completed.
 ## Note
 - Use Chinese in `<think>` part.
 - Write a small plan and finally summarize your next action (with its target element) in one sentence in `<action_desp>` part.
-- Before using type(), always click the target input field first to ensure cursor focus is in the correct position.
-- When the task requires opening an app that is not visible on screen, use Spotlight: hotkey(key='ctrl space'), then type(content='app name'), then hotkey(key='enter').
-- To clear text in an input field, first click the field, then hotkey(key='ctrl a'), then hotkey(key='backspace').
 
 ## User Instruction:
 {instruction}
+
 """
 
     def __init__(self, model_path: str):
@@ -353,11 +349,11 @@ finish() # The task is completed.
         if func_name == "hotkey":
             return {"action": "hotkey", "key": kwargs.get("key", "")}
         if func_name == "scroll":
-            amount = kwargs.get("amount", "3")
+            amount = kwargs.get("amount", "5")
             try:
                 amount = int(amount)
             except (ValueError, TypeError):
-                amount = 3
+                amount = 5
             result = {"action": "scroll", "direction": kwargs.get("direction", "down"), "amount": amount}
             box = kwargs.get("start_box", "")
             if box:
@@ -378,6 +374,8 @@ finish() # The task is completed.
             return {"action": "wait", "duration": duration}
         if func_name == "finish":
             return {"action": "finish"}
+        if func_name == "open_app":
+            return {"action": "open_app", "app_name": kwargs.get("app_name", "")}
         if func_name == "open_url":
             return {"action": "open_url", "url": kwargs.get("url", "")}
         if func_name == "stop":
@@ -425,6 +423,8 @@ finish() # The task is completed.
             return at
         inp = a.get("input", {})
         name = a.get("name", "")
+        if name == "open_app":
+            return f"open_app(\"{inp.get('app_name', '')}\")"
         if name == "open_url":
             return f"open_url(\"{inp.get('url', '')}\")"
         action = inp.get("action", "unknown")
@@ -445,6 +445,13 @@ finish() # The task is completed.
 
         if act == "finish":
             return [{"action_type": "DONE"}]
+        if act == "open_app":
+            return [{
+                "name": "open_app",
+                "input": {"app_name": action.get("app_name", "")},
+                "id": str(uuid.uuid4()),
+                "action_type": "tool_use",
+            }]
         if act == "open_url":
             return [{
                 "name": "open_url",
@@ -517,12 +524,11 @@ finish() # The task is completed.
             amount = action.get("amount", 3)
             coords = action.get("coords")
             coordinate = self._norm_coord(coords[0], coords[1]) if coords else [640, 360]
-            multiplier = AUTOMATION_CONFIG["SCROLL_MULTIPLIER"]
             return [self._make_tool_action({
                 "action": "scroll",
                 "scroll_direction": direction,
                 "coordinate": coordinate,
-                "scroll_amount": max(1, amount // multiplier),
+                "scroll_amount": amount,
             })]
 
         if act == "drag":
