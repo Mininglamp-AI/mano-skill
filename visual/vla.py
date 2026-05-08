@@ -286,7 +286,10 @@ def cmd_install_model(args):
         from huggingface_hub import snapshot_download
         path = snapshot_download(model_name)
         print(f"Model downloaded to: {path}")
-        print(f"Set as default: mano-cua config --set default-model-path {path}")
+
+        from visual.config.user_config import set_config
+        set_config("default-model-path", path)
+        print(f"Config updated: default-model-path = {path}")
         return 0
     except ImportError:
         print("Error: huggingface_hub not installed. pip install huggingface_hub")
