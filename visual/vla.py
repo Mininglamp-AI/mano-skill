@@ -284,12 +284,15 @@ def cmd_install_model(args):
     print(f"Downloading model: {model_name}")
     try:
         from huggingface_hub import snapshot_download
-        path = snapshot_download(model_name)
-        print(f"Model downloaded to: {path}")
+        path = snapshot_download(model_name, allow_patterns="w8a16/*")
+
+        import os
+        model_path = os.path.join(path, "w8a16") if os.path.isdir(os.path.join(path, "w8a16")) else path
+        print(f"Model downloaded to: {model_path}")
 
         from visual.config.user_config import set_config
-        set_config("default-model-path", path)
-        print(f"Config updated: default-model-path = {path}")
+        set_config("default-model-path", model_path)
+        print(f"Config updated: default-model-path = {model_path}")
         return 0
     except ImportError:
         print("Error: huggingface_hub not installed. pip install huggingface_hub")
