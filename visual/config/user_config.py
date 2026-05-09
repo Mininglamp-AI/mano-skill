@@ -13,6 +13,7 @@ CONFIG_DEFAULTS = {
 
 CONFIG_KEYS = {
     "default-model-path": "Local model weights directory (required for --local)",
+    "python-path":        "Python interpreter with local deps already installed (skips install-sdk)",
     "w8a8":               "W8A8 INT8 acceleration: 'auto', 'on', or 'off' (default: auto, requires M5+)",
     "max-steps":          f"Maximum steps per task (default: {CONFIG_DEFAULTS['max-steps']})",
     "minimize":           f"Start with minimized UI panel: true/false (default: {CONFIG_DEFAULTS['minimize']})",

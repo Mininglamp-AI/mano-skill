@@ -9,6 +9,7 @@
 # ]
 # ///
 
+import os
 import sys
 import platform
 import argparse
@@ -90,6 +91,16 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
         _open_url_in_browser(url)
 
     if local:
+        # Check if user has a custom Python environment with deps already installed
+        from visual.config.user_config import get_config as _get_config
+        python_path = _get_config("python-path")
+        if python_path and os.path.isfile(python_path) and os.path.realpath(python_path) != os.path.realpath(sys.executable):
+            # Re-execute with the user's Python that has all deps
+            src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            env = os.environ.copy()
+            env["PYTHONPATH"] = src_dir + ((":" + env.get("PYTHONPATH", "")) if env.get("PYTHONPATH") else "")
+            os.execve(python_path, [python_path, "-m", "visual.vla"] + sys.argv[1:], env)
+
         # --- Local mode ---
         try:
             from visual.agents.local import LocalAgent
@@ -189,6 +200,31 @@ def cmd_config(args):
             return 1
         set_config(args.set[0], args.set[1])
         print(f"Set {args.set[0]} = {args.set[1]}")
+        # Setting python-path: verify deps in that environment
+        if args.set[0] == "python-path":
+            py = args.set[1]
+            if os.path.isfile(py):
+                result = subprocess.run(
+                    [py, "-c", "from vlm_service import custom_generate; from cider import is_available; import torch; print('OK')"],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    set_config("sdk-installed", "true")
+                    print("  Dependencies verified. sdk-installed = true")
+                else:
+                    err = result.stderr.strip().split("\n")[-1] if result.stderr else "unknown error"
+                    print(f"  Warning: dependencies missing in that environment — {err}")
+                    print("  You may need to install: mlx-vlm, torch, cider (compiled from git)")
+            else:
+                print(f"  Warning: {py} not found")
+        # Setting default-model-path: verify model exists
+        if args.set[0] == "default-model-path":
+            expanded = os.path.expanduser(args.set[1])
+            if os.path.isdir(expanded):
+                set_config("model-installed", "true")
+                print(f"  Model verified. model-installed = true")
+            else:
+                print(f"  Warning: path not found — {expanded}")
         return 0
 
     print("Usage: mano-cua config [--list | --get KEY | --set KEY VALUE]")
@@ -197,84 +233,97 @@ def cmd_config(args):
 
 def cmd_check(args):
     """Check local mode dependencies"""
-    ok = True
+    from visual.config.user_config import get_config, set_config
 
-    # 1. Check mlx-vlm
-    try:
-        import mlx_vlm
-        print(f"  mlx-vlm: OK ({mlx_vlm.__version__ if hasattr(mlx_vlm, '__version__') else 'installed'})")
-    except ImportError:
-        print("  mlx-vlm: MISSING — pip install mlx-vlm")
-        ok = False
+    sdk_installed = get_config("sdk-installed") == "true"
+    model_installed = get_config("model-installed") == "true"
 
-    # 2. Check vlm_service (inference engine from cider)
-    try:
-        from vlm_service import custom_generate
-        print(f"  vlm_service: OK")
-    except ImportError:
-        print("  vlm_service: MISSING — pip install git+https://github.com/Mininglamp-AI/cider.git")
-        ok = False
+    # If not marked, try to verify and update
+    if not sdk_installed:
+        python_path = get_config("python-path")
+        py = python_path if python_path and os.path.isfile(python_path) else sys.executable
+        result = subprocess.run(
+            [py, "-c", "from vlm_service import custom_generate; from cider import is_available; import torch"],
+            capture_output=True
+        )
+        if result.returncode == 0:
+            set_config("sdk-installed", "true")
+            sdk_installed = True
 
-    # 3. Check cider W8A8
-    try:
-        from cider import is_available
-        if is_available():
-            print("  W8A8: available (M5+)")
-        else:
-            print("  W8A8: not available (requires M5+, will use standard inference)")
-    except Exception:
-        print("  W8A8: unknown")
+    if not model_installed:
+        model_path = get_config("default-model-path")
+        if model_path and os.path.isdir(os.path.expanduser(model_path)):
+            set_config("model-installed", "true")
+            model_installed = True
 
-    # 4. Check model path
-    from visual.config.user_config import get_config
-    model_path = get_config("default-model-path")
-    if model_path:
-        import os
-        expanded = os.path.expanduser(model_path)
-        if os.path.isdir(expanded):
-            print(f"  model: OK ({expanded})")
-        else:
-            print(f"  model: path not found ({expanded})")
-            ok = False
+    # Report
+    if sdk_installed:
+        python_path = get_config("python-path") or sys.executable
+        print(f"  sdk: OK (python: {python_path})")
     else:
-        print("  model: not configured — mano-cua config --set default-model-path ~/path/to/model")
-        ok = False
+        print("  sdk: NOT READY — run: mano-cua install-sdk")
+        print("       or set python-path to an environment with deps:")
+        print("       mano-cua config --set python-path /path/to/python")
 
-    if ok:
+    if model_installed:
+        print(f"  model: OK ({get_config('default-model-path')})")
+    else:
+        print("  model: NOT READY — run: mano-cua install-model")
+        print("       or set model path manually:")
+        print("       mano-cua config --set default-model-path /path/to/model")
+
+    if sdk_installed and model_installed:
         print("\nLocal mode is ready.")
+        return 0
     else:
-        print("\nSome dependencies are missing. Fix the items above.")
-    return 0 if ok else 1
+        print("\nLocal mode is not ready. Fix the items above.")
+        return 1
 
 
 def cmd_install_sdk(args):
-    """Install local inference SDK (mlx-vlm + cider) into the current environment."""
+    """Install local inference SDK (mlx-vlm + cider + torch) into the current environment."""
     import subprocess
 
     pip_cmd = [sys.executable, "-m", "pip"]
 
-    packages = [
-        ("mlx_vlm", "mlx-vlm"),
-        ("cider", "git+https://github.com/Mininglamp-AI/cider.git"),
-    ]
-
-    for module_name, install_spec in packages:
-        try:
-            __import__(module_name)
-            label = install_spec.split("/")[-1].replace(".git", "") if "/" in install_spec else install_spec
-            print(f"  {label}: already installed")
-            continue
-        except ImportError:
-            pass
-
-        print(f"  Installing {install_spec}...")
-        result = subprocess.run(pip_cmd + ["install", install_spec])
+    # 1. mlx-vlm
+    try:
+        import mlx_vlm
+        print(f"  mlx-vlm: already installed")
+    except ImportError:
+        print(f"  Installing mlx-vlm...")
+        result = subprocess.run(pip_cmd + ["install", "mlx-vlm"])
         if result.returncode != 0:
-            print(f"  Installation failed.")
+            print(f"  mlx-vlm installation failed.")
             return 1
-        print(f"  Installed.")
+        print(f"  mlx-vlm installed.")
+
+    # 2. torch (required by vlm_service)
+    try:
+        import torch
+        print(f"  torch: already installed")
+    except ImportError:
+        print(f"  Installing torch...")
+        result = subprocess.run(pip_cmd + ["install", "torch"])
+        if result.returncode != 0:
+            print(f"  torch installation failed.")
+            return 1
+        print(f"  torch installed.")
+
+    # 3. cider — always install from GitHub (must compile C++ extension)
+    print(f"  Installing cider from GitHub (compiling C++ extension)...")
+    result = subprocess.run(pip_cmd + ["install", "--force-reinstall", "--no-deps", "git+https://github.com/Mininglamp-AI/cider.git"])
+    if result.returncode != 0:
+        print(f"  cider installation failed. Ensure CMake >= 3.27 and Xcode CLI tools are installed.")
+        return 1
+    print(f"  cider installed.")
+
+    from visual.config.user_config import set_config
+    set_config("sdk-installed", "true")
 
     print("\nSDK ready. Run 'mano-cua check' to verify.")
+    print("\nTip: If you already have deps in another environment, you can skip install-sdk:")
+    print("     mano-cua config --set python-path /path/to/your/python")
     return 0
 
 
@@ -282,6 +331,8 @@ def cmd_install_model(args):
     """Download model weights from HuggingFace"""
     model_name = args.name or "Mininglamp-2718/Mano-P"
     print(f"Downloading model: {model_name}")
+    print("\nTip: If you already have model weights locally, skip this and set the path directly:")
+    print("     mano-cua config --set default-model-path /path/to/model\n")
     try:
         from huggingface_hub import snapshot_download
         path = snapshot_download(model_name, allow_patterns="w8a16/*")
@@ -292,6 +343,7 @@ def cmd_install_model(args):
 
         from visual.config.user_config import set_config
         set_config("default-model-path", model_path)
+        set_config("model-installed", "true")
         print(f"Config updated: default-model-path = {model_path}")
         return 0
     except ImportError:
