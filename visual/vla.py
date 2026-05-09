@@ -84,12 +84,6 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
     from visual.config.visual_config import BASE_URL, AUTOMATION_CONFIG, API_HEADERS
     from visual.computer.computer_use_util import get_or_create_device_id
 
-    # Open app/URL before starting (both modes)
-    if app:
-        _open_app(app)
-    if url:
-        _open_url_in_browser(url)
-
     if local:
         # Check if user has a custom Python environment with deps already installed
         from visual.config.user_config import get_config as _get_config
@@ -101,12 +95,18 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
             env["PYTHONPATH"] = src_dir + ((":" + env.get("PYTHONPATH", "")) if env.get("PYTHONPATH") else "")
             os.execve(python_path, [python_path, "-m", "visual.vla"] + sys.argv[1:], env)
 
+    # Open app/URL before starting (both modes)
+    if app:
+        _open_app(app)
+    if url:
+        _open_url_in_browser(url)
+
         # --- Local mode ---
         try:
             from visual.agents.local import LocalAgent
         except ImportError as e:
-            print(f"Error: Local mode dependencies not installed: {e}")
-            print("Install with: pip install mlx-vlm Pillow")
+            print(f"Error: Local mode dependencies not available: {e}")
+            print("Run: mano-cua install-sdk")
             return 1
 
         resolved_path = model_path
@@ -281,49 +281,56 @@ def cmd_check(args):
 
 
 def cmd_install_sdk(args):
-    """Install local inference SDK (mlx-vlm + cider + torch) into the current environment."""
+    """Install local inference SDK into a persistent venv at ~/.mano/venv."""
     import subprocess
 
-    pip_cmd = [sys.executable, "-m", "pip"]
+    venv_dir = os.path.expanduser("~/.mano/venv")
+    venv_python = os.path.join(venv_dir, "bin", "python3")
 
-    # 1. mlx-vlm
-    try:
-        import mlx_vlm
-        print(f"  mlx-vlm: already installed")
-    except ImportError:
-        print(f"  Installing mlx-vlm...")
-        result = subprocess.run(pip_cmd + ["install", "mlx-vlm"])
-        if result.returncode != 0:
-            print(f"  mlx-vlm installation failed.")
-            return 1
-        print(f"  mlx-vlm installed.")
+    # Create persistent venv if not exists
+    if not os.path.isfile(venv_python):
+        print(f"  Creating persistent venv at {venv_dir}...")
+        subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True)
 
-    # 2. torch (required by vlm_service)
-    try:
-        import torch
-        print(f"  torch: already installed")
-    except ImportError:
-        print(f"  Installing torch...")
-        result = subprocess.run(pip_cmd + ["install", "torch"])
-        if result.returncode != 0:
-            print(f"  torch installation failed.")
-            return 1
-        print(f"  torch installed.")
+    pip_cmd = [venv_python, "-m", "pip"]
 
-    # 3. cider — always install from GitHub (must compile C++ extension)
+    # 1. Base deps (same as brew venv — needed for mano-cua to run)
+    print(f"  Installing base dependencies...")
+    result = subprocess.run(pip_cmd + ["install", "requests", "mss", "pynput", "customtkinter", "Pillow"], capture_output=True)
+    if result.returncode != 0:
+        print(f"  Base dependencies installation failed.")
+        return 1
+
+    # 2. mlx-vlm (includes mlx, transformers, etc.)
+    print(f"  Installing mlx-vlm...")
+    result = subprocess.run(pip_cmd + ["install", "mlx-vlm"])
+    if result.returncode != 0:
+        print(f"  mlx-vlm installation failed.")
+        return 1
+
+    # 3. torch (required by vlm_service)
+    print(f"  Installing torch...")
+    result = subprocess.run(pip_cmd + ["install", "torch"])
+    if result.returncode != 0:
+        print(f"  torch installation failed.")
+        return 1
+
+    # 4. cider — always from GitHub (must compile C++ extension)
     print(f"  Installing cider from GitHub (compiling C++ extension)...")
     result = subprocess.run(pip_cmd + ["install", "--force-reinstall", "--no-deps", "git+https://github.com/Mininglamp-AI/cider.git"])
     if result.returncode != 0:
         print(f"  cider installation failed. Ensure CMake >= 3.27 and Xcode CLI tools are installed.")
         return 1
-    print(f"  cider installed.")
+    print(f"  cider: installed")
 
+    # Set python-path to the persistent venv
     from visual.config.user_config import set_config
+    set_config("python-path", venv_python)
     set_config("sdk-installed", "true")
 
-    print("\nSDK ready. Run 'mano-cua check' to verify.")
-    print("\nTip: If you already have deps in another environment, you can skip install-sdk:")
-    print("     mano-cua config --set python-path /path/to/your/python")
+    print(f"\nSDK ready. Python path set to: {venv_python}")
+    print("Run 'mano-cua check' to verify.")
+    return 0
     return 0
 
 
