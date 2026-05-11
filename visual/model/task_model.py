@@ -1,6 +1,10 @@
+import base64
+import json
+import os
 import platform
 import threading
 import time
+import uuid
 from typing import Optional, Callable, Dict, Any, List
 
 from visual.agents.base import BaseAgent
@@ -34,6 +38,11 @@ class TaskModel:
         self.max_steps = None
         self.eval_result = None
 
+        # Trajectory saving
+        self._save_trajectory = False
+        self._trajectory_dir = None
+        self._session_id = None
+
     # ========== Data Monitoring ==========
     def set_state_changed_callback(self, callback: Callable[[TaskState], None]):
         """Set state change callback"""
@@ -60,6 +69,28 @@ class TaskModel:
         # Device and platform information
         self.state.device_id = get_or_create_device_id()
         self.state.platform_tag = platform.system()
+
+        # Trajectory saving
+        from visual.config.user_config import get_config
+        self._save_trajectory = get_config("save-trajectory") == "true"
+        if self._save_trajectory:
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            self._session_id = f"sess-{ts}-{uuid.uuid4().hex[:8]}"
+            self._trajectory_dir = os.path.join(
+                os.path.expanduser("~/.mano/trajectory"), self._session_id
+            )
+            os.makedirs(os.path.join(self._trajectory_dir, "screenshots"), exist_ok=True)
+            # Save task metadata
+            with open(os.path.join(self._trajectory_dir, "task.json"), "w", encoding="utf-8") as f:
+                json.dump({
+                    "task": task_name,
+                    "expected_result": expected_result,
+                    "agent_type": agent.agent_type,
+                    "max_steps": max_steps,
+                    "session_id": self._session_id,
+                    "timestamp": ts,
+                }, f, indent=2, ensure_ascii=False)
+            print(f"Trajectory: {self._trajectory_dir}")
 
         # Initialize executor
         self.executor = ComputerActionExecutor(on_minimize_panel=self.on_minimize_panel)
@@ -93,6 +124,7 @@ class TaskModel:
         self.state.status = TASK_STATUS["COMPLETED"]
         self.state.is_running = False
         self.stop_event.set()
+        self._save_final_trajectory()
         self._print_summary("COMPLETED")
         self._notify_state_changed()
 
@@ -104,6 +136,7 @@ class TaskModel:
         # Tell agent to stop (cloud: server API, local: no-op)
         if self.agent:
             self.agent.stop()
+        self._save_final_trajectory()
         self._print_summary("STOPPED_BY_USER")
         self._notify_state_changed()
 
@@ -113,6 +146,7 @@ class TaskModel:
         self.state.error_msg = error_msg
         self.state.is_running = False
         self.stop_event.set()
+        self._save_final_trajectory()
         self._print_summary("ERROR", error_msg)
         self._notify_state_changed()
 
@@ -290,7 +324,62 @@ class TaskModel:
 
             step_idx += 1
 
+            # Save trajectory
+            if self._save_trajectory and self._trajectory_dir:
+                self._save_step_trajectory(step_idx, reasoning, actions, action_desc, tool_results)
+
             if self.max_steps is not None and step_idx >= self.max_steps:
                 print(f"Max steps ({self.max_steps}) reached, stopping task")
                 self.state.status = TASK_STATUS["MAX_STEP_REACHED"]
                 break
+
+    # ========== Trajectory Saving ==========
+    def _save_step_trajectory(self, step_idx, reasoning, actions, action_desc, tool_results):
+        """Save screenshot + action metadata for one step."""
+        try:
+            for tr in reversed(tool_results or []):
+                b64 = tr.get("screenshot_b64")
+                if b64:
+                    screenshot_bytes = base64.b64decode(b64)
+                    path = os.path.join(self._trajectory_dir, "screenshots", f"{step_idx}.png")
+                    with open(path, "wb") as f:
+                        f.write(screenshot_bytes)
+                    break
+
+            step_data = {
+                "step": step_idx,
+                "reasoning": reasoning,
+                "action_desc": action_desc,
+                "actions": [{"name": a.get("name"), "input": a.get("input"), "action_type": a.get("action_type")} for a in actions],
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+            history_path = os.path.join(self._trajectory_dir, "history.jsonl")
+            with open(history_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(step_data, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print(f"Warning: failed to save trajectory step {step_idx}: {e}")
+
+    def _save_final_trajectory(self):
+        """Save final result summary + final screenshot."""
+        if not self._save_trajectory or not self._trajectory_dir:
+            return
+        try:
+            final_shot = screenshot_to_bytes()
+            if final_shot:
+                path = os.path.join(self._trajectory_dir, "screenshots", "final.png")
+                with open(path, "wb") as f:
+                    f.write(final_shot)
+
+            result = {
+                "task": self.state.task_name,
+                "status": self.state.status,
+                "total_steps": self.state.progress.step_idx,
+                "agent_type": self.agent.agent_type if self.agent else None,
+                "session_id": self._session_id,
+                "error_msg": self.state.error_msg,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+            with open(os.path.join(self._trajectory_dir, "result.json"), "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Warning: failed to save final trajectory: {e}")
