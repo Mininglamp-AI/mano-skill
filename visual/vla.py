@@ -101,6 +101,7 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
     if url:
         _open_url_in_browser(url)
 
+    if local:
         # --- Local mode ---
         try:
             from visual.agents.local import LocalAgent
