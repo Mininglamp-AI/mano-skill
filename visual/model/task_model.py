@@ -8,6 +8,8 @@ import uuid
 from typing import Optional, Callable, Dict, Any, List
 
 from visual.agents.base import BaseAgent
+
+STOP_FLAG_PATH = os.path.expanduser("~/.mano/stop.flag")
 from visual.agents.key_normalizer import normalize_actions
 from visual.computer.computer_action_executor import ComputerActionExecutor
 from visual.config.visual_config import AUTOMATION_CONFIG, TASK_STATUS
@@ -97,6 +99,10 @@ class TaskModel:
 
         # Reset stop signal
         self.stop_event.clear()
+        try:
+            os.remove(STOP_FLAG_PATH)
+        except OSError:
+            pass
 
         # Notify state change
         self._notify_state_changed()
@@ -251,8 +257,9 @@ class TaskModel:
         step_idx = 0
 
         while self.state.is_running and not self.stop_event.is_set():
-            # 1. Check stop signal
-            if self.stop_event.is_set():
+            # 1. Check stop signal (in-process or external file flag)
+            if self.stop_event.is_set() or os.path.isfile(STOP_FLAG_PATH):
+                print("Stop signal detected. Stopping task...")
                 self.mark_stopped()
                 break
 

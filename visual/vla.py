@@ -404,7 +404,14 @@ def main():
         return 1
 
     if args.command == "stop":
-        return stop_session()
+        # Write stop flag (picked up by local task loop between steps)
+        flag = os.path.expanduser("~/.mano/stop.flag")
+        os.makedirs(os.path.dirname(flag), exist_ok=True)
+        open(flag, "w").close()
+        print("Stop signal sent. Local task will stop after current step completes.")
+        # Also attempt cloud session stop
+        ret = stop_session()
+        return ret
 
     if args.command == "config":
         return cmd_config(args)
