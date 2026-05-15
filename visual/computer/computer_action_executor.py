@@ -38,7 +38,10 @@ class ComputerActionExecutor:
         start_time = time.time()
 
         try:
-            if tool_name == "minimize_panel":
+            if tool_name == "bash":
+                result = self._run_bash(tool_input)
+                return result
+            elif tool_name == "minimize_panel":
                 if self.on_minimize_panel:
                     self.on_minimize_panel()
                 msg = "panel minimized"
@@ -298,3 +301,61 @@ class ComputerActionExecutor:
                 subprocess.Popen(["xdg-open", url])
         except Exception as e:
             raise RuntimeError(f"Failed to open {url}: {e}")
+
+    def _run_bash(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute bash command and return output"""
+        start_time = time.time()
+        command = tool_input.get("command")
+        restart = tool_input.get("restart", False)
+
+        if restart:
+            return {
+                "ok": True,
+                "message": "Bash session restarted",
+                "meta": {"action": "bash_restart", "elapsed_time": time.time() - start_time},
+                "is_bash": True,
+            }
+
+        if not command:
+            return {
+                "ok": False,
+                "message": "No command provided",
+                "meta": {"action": "bash", "elapsed_time": time.time() - start_time},
+                "is_bash": True,
+            }
+
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=os.path.expanduser("~"),
+            )
+            output = result.stdout + result.stderr
+            # Truncate large output
+            if len(output) > 10000:
+                output = output[:10000] + f"\n\n... Output truncated ({len(output)} total chars) ..."
+            ok = result.returncode == 0
+            dt = time.time() - start_time
+            return {
+                "ok": ok,
+                "message": output if output else ("Success" if ok else f"Exit code: {result.returncode}"),
+                "meta": {"action": "bash", "command": command, "exit_code": result.returncode, "elapsed_time": dt},
+                "is_bash": True,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "ok": False,
+                "message": f"Error: Command timed out after 30 seconds",
+                "meta": {"action": "bash", "command": command, "elapsed_time": time.time() - start_time},
+                "is_bash": True,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "message": f"Error: {type(e).__name__}: {e}",
+                "meta": {"action": "bash", "command": command, "elapsed_time": time.time() - start_time},
+                "is_bash": True,
+            }
