@@ -82,16 +82,19 @@ class TaskModel:
                 os.path.expanduser("~/.mano/trajectory"), self._session_id
             )
             os.makedirs(os.path.join(self._trajectory_dir, "screenshots"), exist_ok=True)
-            # Save task metadata
-            with open(os.path.join(self._trajectory_dir, "task.json"), "w", encoding="utf-8") as f:
-                json.dump({
-                    "task": task_name,
-                    "expected_result": expected_result,
-                    "agent_type": agent.agent_type,
-                    "max_steps": max_steps,
-                    "session_id": self._session_id,
-                    "timestamp": ts,
-                }, f, indent=2, ensure_ascii=False)
+            # Save session metadata (updated with result on completion)
+            self._session_meta = {
+                "task": task_name,
+                "expected_result": expected_result,
+                "agent_type": agent.agent_type,
+                "max_steps": max_steps,
+                "session_id": self._session_id,
+                "started_at": ts,
+                "platform": platform.system(),
+                "arch": platform.machine(),
+                "os_version": platform.mac_ver()[0] or platform.version(),
+            }
+            self._save_session_meta()
             print(f"Trajectory: {self._trajectory_dir}")
 
         # Initialize executor
@@ -284,8 +287,12 @@ class TaskModel:
 
             # 5. Handle terminal status
             if status == "DONE":
+                if self._save_trajectory and self._trajectory_dir:
+                    self._save_step_trajectory(step_idx + 1, reasoning, actions, action_desc, tool_results)
                 break
             elif status == "FAIL":
+                if self._save_trajectory and self._trajectory_dir:
+                    self._save_step_trajectory(step_idx + 1, reasoning, actions, action_desc, tool_results)
                 self.mark_error("Agent marked task as failed")
                 break
             elif status == "MAX_STEP_REACHED":
@@ -377,16 +384,17 @@ class TaskModel:
                 with open(path, "wb") as f:
                     f.write(final_shot)
 
-            result = {
-                "task": self.state.task_name,
+            # Update session metadata with result
+            self._session_meta.update({
                 "status": self.state.status,
                 "total_steps": self.state.progress.step_idx,
-                "agent_type": self.agent.agent_type if self.agent else None,
-                "session_id": self._session_id,
                 "error_msg": self.state.error_msg,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-            with open(os.path.join(self._trajectory_dir, "result.json"), "w", encoding="utf-8") as f:
-                json.dump(result, f, indent=2, ensure_ascii=False)
+                "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            self._save_session_meta()
         except Exception as e:
             print(f"Warning: failed to save final trajectory: {e}")
+
+    def _save_session_meta(self):
+        with open(os.path.join(self._trajectory_dir, "session.json"), "w", encoding="utf-8") as f:
+            json.dump(self._session_meta, f, indent=2, ensure_ascii=False)
