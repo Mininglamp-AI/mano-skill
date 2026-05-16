@@ -17,6 +17,30 @@ import subprocess
 import time
 import requests
 
+# Windows: emoji / non-ASCII output crashes on legacy GBK/CP936 consoles
+# (mano-skill issues #1, #2, #3 — UnicodeEncodeError on cleanup print).
+# Reconfigure stdout/stderr to UTF-8 with replace to keep mac/Linux untouched.
+# The reconfigure() method only exists on TextIOWrapper (Python 3.7+ stdout/
+# stderr); when the streams have been redirected (capsys, GUI console, daemon
+# launchers, etc.) it may be missing or raise. All errors are swallowed since
+# this is best-effort and must never block CLI startup.
+if platform.system() == "Windows":
+    for _stream in (sys.stdout, sys.stderr):
+        if _stream is None:
+            continue
+        reconfigure = getattr(_stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError, AttributeError):
+            # Stream already locked (e.g. wrapped by pytest capture) or
+            # underlying buffer doesn't support reconfigure — fine, fall back
+            # to whatever encoding was active before. Subsequent emoji prints
+            # will surface as UnicodeEncodeError but won't be worse than
+            # before this patch.
+            pass
+
 
 def stop_session():
     """Stop the current active session for this device"""
@@ -59,22 +83,189 @@ def _open_url_in_browser(url: str):
         print(f"Warning: failed to open URL: {e}")
 
 
-def _open_app(app_name: str):
-    """Open an application (cross-platform)."""
+# Windows alias map: lazy-loaded to avoid importing on macOS/Linux.
+_WINDOWS_APP_ALIASES = None
+
+def _get_win_aliases():
+    global _WINDOWS_APP_ALIASES
+    if _WINDOWS_APP_ALIASES is None:
+        from visual.win_app_aliases import WIN_APP_ALIASES
+        _WINDOWS_APP_ALIASES = WIN_APP_ALIASES
+    return _WINDOWS_APP_ALIASES
+
+
+def _bring_window_to_front_windows(process_name_hint: str) -> bool:
+    """Try to bring a freshly-launched app to the foreground on Windows.
+
+    Many Win11 apps (Notepad, Calculator, Settings) are UWP-wrapped and the
+    initial Start-Process / startfile call returns before the real window
+    surfaces — or the window opens behind the current foreground app.
+    Without forcing focus, the GUI agent screenshots the previous app and
+    reports "Notepad doesn't seem to have appeared yet" (mano-skill #5
+    follow-up).
+
+    Strategy:
+      a) Walk all top-level windows; match by exe basename of the owning
+         process (more reliable than title substring — freshly created
+         windows may have empty titles for ~1 second on Win11).
+      b) Fall back to title substring match.
+
+    Returns True iff a matching window was brought to front.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        psapi = ctypes.windll.psapi
+        EnumWindows = user32.EnumWindows
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        GetWindowText = user32.GetWindowTextW
+        GetWindowTextLength = user32.GetWindowTextLengthW
+        IsWindowVisible = user32.IsWindowVisible
+        GetWindowThreadProcessId = user32.GetWindowThreadProcessId
+        SetForegroundWindow = user32.SetForegroundWindow
+        ShowWindow = user32.ShowWindow
+        OpenProcess = kernel32.OpenProcess
+        CloseHandle = kernel32.CloseHandle
+        GetModuleBaseNameW = psapi.GetModuleBaseNameW
+        # SW_RESTORE=9: undo minimize without changing maximized state.
+        SW_RESTORE = 9
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+        hint = process_name_hint.lower().strip()
+        # Prefer exe-name match: "notepad" → "notepad.exe".
+        exe_target = hint if hint.endswith(".exe") else f"{hint}.exe"
+
+        target_hwnd = []
+
+        def _enum_cb(hwnd, _lparam):
+            if not IsWindowVisible(hwnd):
+                return True
+            # a) match by owning process exe name
+            pid = wintypes.DWORD(0)
+            GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value:
+                hproc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+                if hproc:
+                    try:
+                        buf = ctypes.create_unicode_buffer(260)
+                        if GetModuleBaseNameW(hproc, None, buf, 260) > 0:
+                            exe = buf.value.lower()
+                            if exe == exe_target or exe.startswith(hint):
+                                target_hwnd.append(hwnd)
+                                return False
+                    finally:
+                        CloseHandle(hproc)
+            # b) fallback: title substring
+            length = GetWindowTextLength(hwnd)
+            if length > 0:
+                tbuf = ctypes.create_unicode_buffer(length + 1)
+                GetWindowText(hwnd, tbuf, length + 1)
+                if hint in tbuf.value.lower():
+                    target_hwnd.append(hwnd)
+                    return False
+            return True
+
+        EnumWindows(EnumWindowsProc(_enum_cb), 0)
+        if not target_hwnd:
+            return False
+        hwnd = target_hwnd[0]
+        ShowWindow(hwnd, SW_RESTORE)
+        # SetForegroundWindow is denied on Win10/11 when the calling process
+        # is not the current foreground (Microsoft's anti focus-stealing).
+        # Workaround: AttachThreadInput to the foreground thread, set focus,
+        # detach. This is a documented stable technique.
+        if SetForegroundWindow(hwnd):
+            return True
+        try:
+            GetForegroundWindow = user32.GetForegroundWindow
+            AttachThreadInput = user32.AttachThreadInput
+            GetCurrentThreadId = kernel32.GetCurrentThreadId
+            fg_hwnd = GetForegroundWindow()
+            fg_thread = GetWindowThreadProcessId(fg_hwnd, None)
+            cur_thread = GetCurrentThreadId()
+            if fg_thread and fg_thread != cur_thread:
+                AttachThreadInput(cur_thread, fg_thread, True)
+                try:
+                    SetForegroundWindow(hwnd)
+                    user32.BringWindowToTop(hwnd)
+                finally:
+                    AttachThreadInput(cur_thread, fg_thread, False)
+                return True
+        except Exception:
+            pass
+        return False
+    except Exception:
+        return False
+
+
+def _open_app(app_name: str) -> str:
+    """Open an application (cross-platform).
+
+    Returns a window-title hint (lowercase substring) that can be used
+    later to re-foreground the app after the GUI overlay initializes
+    (Tk steals focus when its window appears, so a one-shot bring-to-
+    front during launch isn't enough on Windows).
+
+    On Windows, three layers of fallback:
+      1. alias table ("Notepad" → notepad.exe) launched via os.startfile —
+         this is the most reliable path for classic Win32 apps because it
+         goes through ShellExecute + handles PATH-resolved exes.
+      2. raw `Start-Process "<name>"` for anything not in the alias table
+         (covers UWP apps registered with display names, custom installs).
+      3. After launch, wait briefly and force the window to the foreground
+         so the GUI agent's first screenshot actually contains the app.
+    """
     system = platform.system()
+    hint = app_name.strip().lower()
     try:
         if system == "Darwin":
             subprocess.Popen(["open", "-a", app_name])
-        elif system == "Windows":
-            subprocess.run(
-                ["powershell", "-Command", f'Start-Process "{app_name}"'],
-                shell=False, capture_output=True, text=True, timeout=10
-            )
-        else:
-            subprocess.Popen([app_name])
+            time.sleep(2)
+            return hint
+        if system == "Windows":
+            key = app_name.strip().lower()
+            launched = False
+            # Layer 1: alias table → os.startfile
+            target = _get_win_aliases().get(key)
+            if target:
+                try:
+                    os.startfile(target)
+                    launched = True
+                except OSError:
+                    launched = False
+            # Layer 2: PowerShell Start-Process (handles UWP, display names)
+            if not launched:
+                try:
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         f'Start-Process "{app_name}"'],
+                        shell=False, capture_output=True, text=True, timeout=10,
+                    )
+                    launched = True
+                except Exception as e:
+                    print(f"Warning: Start-Process failed: {e}")
+            # Hint = exe stem (notepad.exe → "notepad") falls back to user
+            # input. Used for both the initial bring-to-front and the
+            # re-foreground call after Tk UI initializes.
+            hint = (target or app_name).rsplit(".", 1)[0].strip().lower()
+            # Layer 3: wait for window, force foreground (best-effort).
+            # Win11 Notepad cold-starts via UWP-style broker and the window
+            # can take 1-3 seconds to actually exist after os.startfile
+            # returns. Poll up to 6 seconds.
+            for _ in range(60):  # ~6s max @ 100ms
+                time.sleep(0.1)
+                if _bring_window_to_front_windows(hint):
+                    break
+            return hint
+        # Linux / other Unix
+        subprocess.Popen([app_name])
         time.sleep(2)
+        return hint
     except Exception as e:
         print(f"Warning: failed to open app: {e}")
+        return hint
 
 
 def run_task(task: str, expected_result: str = None, minimize: bool = False,
@@ -85,13 +276,20 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
     from visual.computer.computer_use_util import get_or_create_device_id
 
     # Open app/URL before starting (both modes)
+    app_hint = None
     if app:
-        _open_app(app)
+        app_hint = _open_app(app)
     if url:
         _open_url_in_browser(url)
 
     if local:
         # --- Local mode ---
+        # Local inference (MLX + cider) is Apple Silicon only. Fail fast on
+        # Windows / Linux so users don't sit through a doomed pip install.
+        if platform.system() != "Darwin":
+            print("Error: --local mode requires macOS with Apple Silicon (mlx-vlm + cider).")
+            print("On Windows / Linux, use cloud mode (omit --local).")
+            return 2
         try:
             from visual.agents.local import LocalAgent
         except ImportError as e:
@@ -274,8 +472,19 @@ def cmd_install_sdk(args):
     """Install local inference SDK into a persistent venv at ~/.mano/venv."""
     import subprocess
 
+    # Local SDK (mlx-vlm + cider) is Apple Silicon only — fail fast.
+    if platform.system() != "Darwin":
+        print("Error: install-sdk targets local mode (mlx-vlm + cider), which is")
+        print("macOS Apple Silicon only. On Windows / Linux, use cloud mode")
+        print("(no install-sdk needed) — just run: mano-cua run \"...\"")
+        return 2
+
     venv_dir = os.path.expanduser("~/.mano/venv")
-    venv_python = os.path.join(venv_dir, "bin", "python3")
+    # macOS / Linux: bin/python3; Windows: Scripts\python.exe (kept for symmetry)
+    if platform.system() == "Windows":
+        venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
+    else:
+        venv_python = os.path.join(venv_dir, "bin", "python3")
 
     # Create persistent venv if not exists
     if not os.path.isfile(venv_python):
@@ -327,6 +536,12 @@ def cmd_install_sdk(args):
 def cmd_install_model(args):
     """Download model weights from HuggingFace"""
     import subprocess
+
+    # Model is for local mode only; same Apple-Silicon-only constraint.
+    if platform.system() != "Darwin":
+        print("Error: install-model is for local mode (macOS Apple Silicon only).")
+        print("On Windows / Linux, use cloud mode — no model download needed.")
+        return 2
 
     model_name = args.name or "Mininglamp-2718/Mano-P"
     model_dir = os.path.expanduser("~/.mano/models/Mano-P")

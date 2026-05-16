@@ -9,10 +9,55 @@ from pynput import mouse
 
 from visual.config.visual_config import AUTOMATION_CONFIG
 
+
+def get_primary_monitor(sct: "mss.base.MSSBase") -> Dict[str, Any]:
+    """Return the primary monitor descriptor from an open mss instance.
+
+    mss exposes monitors[0] as the virtual screen (all monitors merged) and
+    monitors[1..N] as individual displays. monitors[1] is *not* guaranteed to
+    be the primary one — in multi-monitor setups (Mano-P issue #16) the user
+    can re-mark any display as primary.
+
+    Selection strategy (independent of mss version):
+      1. Pick the monitor that contains the origin (0, 0). On Windows the
+         primary monitor is the one with ``(left, top) == (0, 0)``; secondary
+         displays have negative or positive offsets. On macOS the primary
+         display also anchors at (0, 0). On Linux/X11 the primary is exposed
+         the same way under mss. This rule is OS-level and holds across mss
+         versions, including releases that don't expose ``is_primary``.
+      2. If no monitor contains (0, 0) (extremely unusual, e.g. all displays
+         have non-zero offsets in some virtual setups), opportunistically use
+         the modern ``is_primary`` flag if mss exposes it.
+      3. Final fallback: ``monitors[1]`` (legacy assumption — same behaviour
+         as the original code, so a worst-case selection equals a no-op).
+    """
+    monitors = sct.monitors
+    if len(monitors) <= 1:
+        return monitors[0]
+
+    # Strategy 1: monitor that contains (0, 0)
+    for m in monitors[1:]:
+        left = m.get("left", 0)
+        top = m.get("top", 0)
+        width = m.get("width", 0)
+        height = m.get("height", 0)
+        if left <= 0 < left + width and top <= 0 < top + height:
+            return m
+
+    # Strategy 2: explicit is_primary flag (mss >= 10.2 exposes this)
+    for m in monitors[1:]:
+        if m.get("is_primary"):
+            return m
+
+    # Strategy 3: legacy fallback (== original sct.monitors[1] behaviour)
+    return monitors[1]
+
+
 def screenshot_to_bytes():
-    """Capture primary screen and return PNG bytes"""
+    """Capture the primary screen and return PNG bytes."""
     with mss.mss() as sct:
-        screenshot = sct.grab(sct.monitors[1])
+        primary = get_primary_monitor(sct)
+        screenshot = sct.grab(primary)
         return mss.tools.to_png(screenshot.rgb, screenshot.size)
 
 def b64_png(png_bytes: bytes) -> str:
@@ -38,7 +83,7 @@ def make_tool_result(tool_use_id: str, ok: bool, message: str,
 def focus_on_primary_screen():
     """Focus mouse on primary screen center"""
     with mss.mss() as sct:
-        primary = sct.monitors[1]
+        primary = get_primary_monitor(sct)
         mouse_controller = mouse.Controller()
         mouse_controller.position = (
             primary["left"] + primary["width"] // 2,

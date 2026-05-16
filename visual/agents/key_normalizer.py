@@ -68,17 +68,28 @@ def _normalize_key_token(k, is_macos):
     k = str(k).strip().lower()
     k = k.replace("-", "_").replace(" ", "_")
 
-    if k in ("command", "cmd", "win", "meta", "super"):
+    # "command" / "cmd" — macOS Cmd, Windows uses Ctrl as Cmd-equivalent.
+    if k in ("command", "cmd"):
         return "cmd" if is_macos else "ctrl"
+    # "win" / "meta" / "super" — these refer to the Windows / Super key on
+    # Linux/Windows, which pynput exposes as Key.cmd. On macOS we still want
+    # cmd. Previously this collapsed to Ctrl on Windows, which broke shortcuts
+    # like Win+E / Win+R.
+    if k in ("win", "meta", "super"):
+        return "cmd"
     if k in ("control", "ctl", "ctrl"):
         return "cmd" if is_macos else "ctrl"
     if k in ("option", "opt"):
         return "alt"
 
-    if k in ("command_l", "cmd_l", "meta_l", "super_l", "win_l"):
+    if k in ("command_l", "cmd_l"):
         return "cmd_l" if is_macos else "ctrl_l"
-    if k in ("command_r", "cmd_r", "meta_r", "super_r", "win_r"):
+    if k in ("command_r", "cmd_r"):
         return "cmd_r" if is_macos else "ctrl_r"
+    if k in ("meta_l", "super_l", "win_l"):
+        return "cmd_l"
+    if k in ("meta_r", "super_r", "win_r"):
+        return "cmd_r"
     if k in ("control_l", "ctl_l", "ctrl_l"):
         return "cmd_l" if is_macos else "ctrl_l"
     if k in ("control_r", "ctl_r", "ctrl_r"):
@@ -102,5 +113,29 @@ def _normalize_key_token(k, is_macos):
         "pagedown": "page_down", "pgdn": "page_down",
         "delete": "backspace",
         "del": "backspace",
+        # Extras commonly emitted by Windows-leaning prompts.
+        "backspace": "backspace",
+        "forward_delete": "delete",
+        "home": "home",
+        "end": "end",
+        "insert": "insert",
+        "ins": "insert",
+        "printscreen": "print_screen",
+        "prtsc": "print_screen",
+        "prtscr": "print_screen",
+        "caps": "caps_lock",
+        "capslock": "caps_lock",
+        "numlock": "num_lock",
+        "scrolllock": "scroll_lock",
+        "contextmenu": "menu",
+        "app": "menu",
+        # Function keys (no remapping needed, but keep here for documentation).
+        **{f"f{i}": f"f{i}" for i in range(1, 25)},
+        # Numpad aliases used by some prompts (pynput exposes plain digits).
+        **{f"numpad{i}": str(i) for i in range(0, 10)},
+        "numpadenter": "enter",
+        "numpad_add": "+", "numpad_subtract": "-",
+        "numpad_multiply": "*", "numpad_divide": "/",
+        "numpad_decimal": ".",
     }
     return alias_map.get(k, k)

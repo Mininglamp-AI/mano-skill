@@ -8,6 +8,9 @@ CLIENT_VERSION = "1.0.8"
 
 def _get_chip_model() -> str:
     """Get Apple chip model (e.g. 'Apple M4 Pro') on macOS, empty string otherwise."""
+    # Guard the sysctl call on non-macOS to avoid noisy FileNotFoundError stderr.
+    if _platform.system() != "Darwin":
+        return ""
     try:
         result = _subprocess.run(
             ["sysctl", "-n", "machdep.cpu.brand_string"],
