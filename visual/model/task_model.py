@@ -57,7 +57,14 @@ class TaskModel:
             self._on_state_changed(self.state)
 
     # ========== Initialization Methods ==========
-    def init_task(self, task_name: str, agent: BaseAgent, expected_result: Optional[str] = None, max_steps: int = None):
+    def init_task(
+        self,
+        task_name: str,
+        agent: BaseAgent,
+        expected_result: Optional[str] = None,
+        max_steps: int = None,
+        cloud_session_id: Optional[str] = None,
+    ):
         """Initialize automation task"""
         # Basic configuration
         self.state.task_name = task_name
@@ -96,7 +103,11 @@ class TaskModel:
                 "arch": platform.machine(),
                 "os_version": platform.mac_ver()[0] or platform.version(),
             }
+            if cloud_session_id:
+                self._session_meta["cloud_session_id"] = cloud_session_id
             self._save_session_meta()
+            from visual.trajectory.log_tee import install_trajectory_tee
+            install_trajectory_tee(self._trajectory_dir)
             print(f"Trajectory: {self._trajectory_dir}")
 
         # Initialize executor
@@ -127,6 +138,8 @@ class TaskModel:
         print(f"[step {step_idx}] Action: {action_desc}")
         if reasoning:
             print(f"[step {step_idx}] Reasoning: {reasoning}")
+        if self._save_trajectory and self._trajectory_dir:
+            self._record_progress_history(step_idx, action_desc, reasoning)
         self._notify_state_changed()
 
     # ========== State Management ==========
@@ -137,6 +150,7 @@ class TaskModel:
         self.stop_event.set()
         self._save_final_trajectory()
         self._print_summary("COMPLETED")
+        self._finalize_trajectory_log()
         self._notify_state_changed()
 
     def mark_stopped(self):
@@ -149,6 +163,7 @@ class TaskModel:
             self.agent.stop()
         self._save_final_trajectory()
         self._print_summary("STOPPED_BY_USER")
+        self._finalize_trajectory_log()
         self._notify_state_changed()
 
     def mark_error(self, error_msg: str):
@@ -159,6 +174,7 @@ class TaskModel:
         self.stop_event.set()
         self._save_final_trajectory()
         self._print_summary("ERROR", error_msg)
+        self._finalize_trajectory_log()
         self._notify_state_changed()
 
     def _print_summary(self, final_status: str, error_msg: str = ""):
@@ -176,6 +192,12 @@ class TaskModel:
             print(f"Error: {error_msg}")
         if self.eval_result:
             print(f"Evaluation result: {json.dumps(self.eval_result, indent=2, ensure_ascii=False)}")
+        if self._save_trajectory and self._trajectory_dir:
+            report_path = os.path.abspath(os.path.join(self._trajectory_dir, "report.html"))
+            if os.path.isfile(report_path):
+                from pathlib import Path
+                print(f"Report: {report_path}")
+                print(f"Preview: {Path(report_path).as_uri()}")
         print(f"{'='*50}\n")
 
     def _mark_evaluating(self):
@@ -231,7 +253,9 @@ class TaskModel:
             if self.state.status == TASK_STATUS["MAX_STEP_REACHED"]:
                 self.state.is_running = False
                 self.stop_event.set()
+                self._save_final_trajectory()
                 self._print_summary("MAX_STEP_REACHED")
+                self._finalize_trajectory_log()
                 self._notify_state_changed()
                 skip = not (self.expected_result and self.agent.agent_type == "cloud")
                 if not skip:
@@ -290,11 +314,15 @@ class TaskModel:
             # 5. Handle terminal status
             if status == "DONE":
                 if self._save_trajectory and self._trajectory_dir:
-                    self._save_step_trajectory(step_idx + 1, reasoning, actions, action_desc, tool_results)
+                    self._save_step_trajectory(
+                        step_idx, reasoning, actions, action_desc, tool_results, agent_status="DONE"
+                    )
                 break
             elif status == "FAIL":
                 if self._save_trajectory and self._trajectory_dir:
-                    self._save_step_trajectory(step_idx + 1, reasoning, actions, action_desc, tool_results)
+                    self._save_step_trajectory(
+                        step_idx, reasoning, actions, action_desc, tool_results, agent_status="FAIL"
+                    )
                 self.mark_error("Agent marked task as failed")
                 break
             elif status == "MAX_STEP_REACHED":
@@ -350,9 +378,36 @@ class TaskModel:
                 break
 
     # ========== Trajectory Saving ==========
-    def _save_step_trajectory(self, step_idx, reasoning, actions, action_desc, tool_results):
+    def _record_progress_history(self, step_idx: int, action_desc: str, reasoning: str):
+        """Append a history line for UI progress (may duplicate per-step action lines)."""
+        from visual.trajectory.history import append_history_line
+
+        phase = "init" if action_desc == "Initializing" else "action"
+        if action_desc in ("DONE", "FAIL"):
+            phase = "terminal"
+        append_history_line(
+            self._trajectory_dir,
+            step=step_idx,
+            action_desc=action_desc,
+            reasoning=reasoning,
+            actions=[],
+            phase=phase,
+            status=None,
+            screenshot=None,
+        )
+
+    def _save_step_trajectory(
+        self,
+        step_idx,
+        reasoning,
+        actions,
+        action_desc,
+        tool_results,
+        agent_status=None,
+    ):
         """Save screenshot + action metadata for one step."""
         try:
+            screenshot_rel = None
             for tr in reversed(tool_results or []):
                 b64 = tr.get("screenshot_b64")
                 if b64:
@@ -360,18 +415,23 @@ class TaskModel:
                     path = os.path.join(self._trajectory_dir, "screenshots", f"{step_idx}.png")
                     with open(path, "wb") as f:
                         f.write(screenshot_bytes)
+                    screenshot_rel = f"screenshots/{step_idx}.png"
                     break
 
-            step_data = {
-                "step": step_idx,
-                "reasoning": reasoning,
-                "action_desc": action_desc,
-                "actions": [{"name": a.get("name"), "input": a.get("input"), "action_type": a.get("action_type")} for a in actions],
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-            history_path = os.path.join(self._trajectory_dir, "history.jsonl")
-            with open(history_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(step_data, ensure_ascii=False) + "\n")
+            from visual.trajectory.history import append_history_line
+
+            phase = "terminal" if agent_status in ("DONE", "FAIL") else "action"
+            desc = action_desc if action_desc else (agent_status or "")
+            append_history_line(
+                self._trajectory_dir,
+                step=step_idx,
+                action_desc=desc,
+                reasoning=reasoning or "",
+                actions=actions or [],
+                phase=phase,
+                status=agent_status,
+                screenshot=screenshot_rel,
+            )
         except Exception as e:
             print(f"Warning: failed to save trajectory step {step_idx}: {e}")
 
@@ -394,8 +454,22 @@ class TaskModel:
                 "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             })
             self._save_session_meta()
+
+            from visual.trajectory.report_generator import generate_report
+
+            generate_report(self._trajectory_dir)
         except Exception as e:
             print(f"Warning: failed to save final trajectory: {e}")
+
+    def _finalize_trajectory_log(self):
+        """Close stdout tee after summary is printed."""
+        if not self._save_trajectory:
+            return
+        try:
+            from visual.trajectory.log_tee import uninstall_trajectory_tee
+            uninstall_trajectory_tee()
+        except Exception as e:
+            print(f"Warning: failed to close trajectory log: {e}")
 
     def _save_session_meta(self):
         with open(os.path.join(self._trajectory_dir, "session.json"), "w", encoding="utf-8") as f:

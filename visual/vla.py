@@ -274,6 +274,13 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
     """Run an automation task"""
     from visual.config.visual_config import BASE_URL, AUTOMATION_CONFIG, API_HEADERS
     from visual.computer.computer_use_util import get_or_create_device_id
+    from visual.config.user_config import get_config
+
+    if get_config("save-trajectory") == "true":
+        from visual.trajectory.log_tee import enable_early_trajectory_buffer
+        enable_early_trajectory_buffer()
+
+    cloud_session_id = None
 
     # Open app/URL before starting (both modes)
     app_hint = None
@@ -334,6 +341,7 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
             data = resp.json()
 
             session_id = data["session_id"]
+            cloud_session_id = session_id
             print(f"Session created: {session_id}")
 
         except Exception as e:
@@ -352,10 +360,16 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
     if minimize and view_model.view and view_model.view._ui_initialized:
         view_model.view.root.after(200, view_model.view._toggle_minimize)
 
-    if not view_model.init_task(task, agent, expected_result=expected_result, max_steps=max_steps):
+    if not view_model.init_task(
+        task, agent, expected_result=expected_result, max_steps=max_steps,
+        cloud_session_id=cloud_session_id,
+    ):
         print("Failed to initialize visualization overlay.")
         # Run task directly without UI
-        view_model.model.init_task(task, agent, expected_result=expected_result, max_steps=max_steps)
+        view_model.model.init_task(
+            task, agent, expected_result=expected_result, max_steps=max_steps,
+            cloud_session_id=cloud_session_id,
+        )
         view_model.model.run_automation_task()
         return 0 if view_model.model.state.status == "completed" else 1
 
