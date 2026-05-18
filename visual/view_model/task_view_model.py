@@ -115,7 +115,14 @@ class TaskViewModel:
         self.view.root.after(ANIMATION_CONFIG["POLL_INTERVAL"], poll_thread)
 
     # ========== Business Methods ==========
-    def init_task(self, task_name: str, agent: BaseAgent, expected_result: Optional[str] = None, max_steps: int = None) -> bool:
+    def init_task(
+        self,
+        task_name: str,
+        agent: BaseAgent,
+        expected_result: Optional[str] = None,
+        max_steps: int = None,
+        cloud_session_id: Optional[str] = None,
+    ) -> bool:
         """Initialize automation task"""
         try:
             import customtkinter as ctk
@@ -129,7 +136,12 @@ class TaskViewModel:
             self.model.on_minimize_panel = lambda: self.view.root.after(0, _minimize_if_needed)
 
             # Initialize Model
-            self.model.init_task(task_name, agent, expected_result=expected_result, max_steps=max_steps)
+            self.model.init_task(
+                task_name, agent,
+                expected_result=expected_result,
+                max_steps=max_steps,
+                cloud_session_id=cloud_session_id,
+            )
 
             # Initialize View
             self.view.show()

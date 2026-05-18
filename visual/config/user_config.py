@@ -18,7 +18,7 @@ CONFIG_KEYS = {
     "w8a8":               "W8A8 INT8 acceleration: 'auto', 'on', or 'off' (default: auto, requires M5+)",
     "max-steps":          f"Maximum steps per task (default: {CONFIG_DEFAULTS['max-steps']})",
     "minimize":           f"Start with minimized UI panel: true/false (default: {CONFIG_DEFAULTS['minimize']})",
-    "save-trajectory":    f"Save screenshots and actions per step: true/false (default: {CONFIG_DEFAULTS['save-trajectory']})",
+    "save-trajectory":    f"Save trajectory (screenshots, history.jsonl, whole.log, report.html): true/false (default: {CONFIG_DEFAULTS['save-trajectory']})",
 }
 
 

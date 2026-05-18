@@ -63,6 +63,35 @@ mano-cua stop
 
 > **Note:** Only one task can run at a time per device. If you need to start a new task, first stop the current one with `mano-cua stop`.
 
+## Configuration
+
+Persistent settings are stored in `~/.mano/config.json`.
+
+```bash
+# List all keys and current values
+mano-cua config --list
+
+# Read or set a value
+mano-cua config --get save-trajectory
+mano-cua config --set save-trajectory true
+```
+
+| Key               | Default | Description                                                              |
+| ----------------- | ------- | ------------------------------------------------------------------------ |
+| `max-steps`       | `100`   | Maximum steps per task                                                   |
+| `minimize`        | `false` | Start with the status panel minimized (`true` / `false`)                 |
+| `save-trajectory` | `false` | Save a per-run trajectory under `~/.mano/trajectory/` (`true` / `false`) |
+
+When `save-trajectory` is `true`, each run writes a session folder (for example `~/.mano/trajectory/sess-<timestamp>-<id>/`) containing:
+
+- `session.json` — task metadata and final status
+- `history.jsonl` — step-by-step actions, reasoning, and screenshot paths
+- `screenshots/` — PNG captures per step
+- `whole.log` — full terminal output (stdout/stderr) for the run
+- `report.html` — offline HTML timeline with collapsible screenshots (open in a browser)
+
+Other keys (for example `default-model-path`, `python-path`, `w8a8`) apply to local mode; run `mano-cua config --list` for the full list.
+
 ## Local Mode
 
 Runs [Mano-P](https://huggingface.co/Mininglamp-2718/Mano-P) entirely on-device via MLX. No data leaves the machine. Requires macOS with Apple Silicon (M1+).
