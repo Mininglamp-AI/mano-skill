@@ -84,6 +84,8 @@ class ComputerActionExecutor:
                     # Start drag
                     self.mouse_controller.press(Button.left)
                     x, y = self._mouse_move(tool_input)
+                    time.sleep(0.2)
+                    self.mouse_controller.release(Button.left)
                     msg = f"drag_to ({x},{y}) ok"
 
                 elif action == "scroll":
@@ -164,7 +166,21 @@ class ComputerActionExecutor:
             self.keyboard_controller.release(getattr(Key, k))
 
     def _type_text(self, text: str):
-        """Type text via clipboard paste (avoids input method conflicts)"""
+        """Type text: direct keypress for safe chars (digits/punctuation), clipboard paste otherwise."""
+        if self._is_safe_for_direct_type(text):
+            for char in text:
+                self.keyboard_controller.type(char)
+                time.sleep(0.02)
+        else:
+            self._paste_from_clipboard(text)
+
+    def _is_safe_for_direct_type(self, text: str) -> bool:
+        """Characters that have direct keycodes and are never intercepted by IME."""
+        safe = set('0123456789.-+_@#$/\\() ')
+        return all(c in safe for c in text)
+
+    def _paste_from_clipboard(self, text: str):
+        """Type text via clipboard paste (avoids input method conflicts)."""
         system = platform.system()
         if system == "Darwin":
             env = os.environ.copy()
@@ -176,6 +192,7 @@ class ComputerActionExecutor:
         else:
             subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode("utf-8"), check=True)
 
+        time.sleep(0.05)
         paste_key = Key.cmd if system == "Darwin" else Key.ctrl
         self.keyboard_controller.press(paste_key)
         self.keyboard_controller.press("v")
