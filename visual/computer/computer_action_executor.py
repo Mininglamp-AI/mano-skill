@@ -10,6 +10,7 @@ from pynput.keyboard import Key
 from pynput.mouse import Button
 
 from visual.config.visual_config import AUTOMATION_CONFIG
+from visual.computer.computer_use_util import get_primary_monitor
 
 
 class ComputerActionExecutor:
@@ -18,7 +19,7 @@ class ComputerActionExecutor:
     def __init__(self, on_minimize_panel=None):
         self.on_minimize_panel = on_minimize_panel
         with mss.mss() as sct:
-            monitor = sct.monitors[1]
+            monitor = get_primary_monitor(sct)
             actual_width = monitor["width"]
             actual_height = monitor["height"]
 
@@ -86,6 +87,8 @@ class ComputerActionExecutor:
                     # Start drag
                     self.mouse_controller.press(Button.left)
                     x, y = self._mouse_move(tool_input)
+                    time.sleep(0.2)
+                    self.mouse_controller.release(Button.left)
                     msg = f"drag_to ({x},{y}) ok"
 
                 elif action == "scroll":
@@ -166,7 +169,21 @@ class ComputerActionExecutor:
             self.keyboard_controller.release(getattr(Key, k))
 
     def _type_text(self, text: str):
-        """Type text via clipboard paste (avoids input method conflicts)"""
+        """Type text: direct keypress for safe chars (digits/punctuation), clipboard paste otherwise."""
+        if self._is_safe_for_direct_type(text):
+            for char in text:
+                self.keyboard_controller.type(char)
+                time.sleep(0.02)
+        else:
+            self._paste_from_clipboard(text)
+
+    def _is_safe_for_direct_type(self, text: str) -> bool:
+        """Characters that have direct keycodes and are never intercepted by IME."""
+        safe = set('0123456789.-+_@#$/\\() ')
+        return all(c in safe for c in text)
+
+    def _paste_from_clipboard(self, text: str):
+        """Type text via clipboard paste (avoids input method conflicts)."""
         system = platform.system()
         if system == "Darwin":
             env = os.environ.copy()
@@ -178,6 +195,7 @@ class ComputerActionExecutor:
         else:
             subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode("utf-8"), check=True)
 
+        time.sleep(0.05)
         paste_key = Key.cmd if system == "Darwin" else Key.ctrl
         self.keyboard_controller.press(paste_key)
         self.keyboard_controller.press("v")
@@ -236,7 +254,7 @@ class ComputerActionExecutor:
         y = int(coord[1] * self.scale_y)
 
         with mss.mss() as sct:
-            primary = sct.monitors[1]
+            primary = get_primary_monitor(sct)
             x = primary["left"] + x
             y = primary["top"] + y
         return x, y
@@ -264,20 +282,62 @@ class ComputerActionExecutor:
                 time.sleep(1)
                 self._move_to_primary(app_name)
             elif system == "Windows":
-                result = subprocess.run(
-                    ["powershell", "-Command", f'Start-Process "{app_name}"'],
-                    shell=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                if result.returncode != 0:
-                    print(f"Failed to open '{app_name}': {result.stderr.strip()}")
-                    raise RuntimeError(f"Failed to open '{app_name}': {result.stderr.strip()}")
+                self._open_app_windows(app_name)
             else:
                 subprocess.Popen([app_name])
         except Exception as e:
             raise RuntimeError(f"Failed to open {app_name}: {e}")
+
+    # ---- Windows app launcher helpers (kept private; no impact on macOS) ----
+
+    def _open_app_windows(self, app_name: str):
+        """Open a Windows app, with alias support for UWP / system pages.
+
+        Order of attempts:
+          1. Alias lookup (covers ms-settings:, calculator:, AppsFolder, etc.).
+          2. ``os.startfile`` (handles registry-known executables, URI handlers,
+             and absolute paths uniformly without spawning a shell).
+          3. PowerShell ``Start-Process`` fallback (legacy behaviour).
+        """
+        original = (app_name or "").strip()
+        if not original:
+            raise RuntimeError("Missing app name")
+        key = original.lower()
+        from visual.win_app_aliases import WIN_APP_ALIASES
+        target = WIN_APP_ALIASES.get(key, original)
+
+        # 1) explorer.exe shell:... aliases need a shell invocation
+        if target.lower().startswith("explorer.exe "):
+            subprocess.Popen(target, shell=True)
+            return
+
+        # 2) ms-* / calculator: / outlookcal: — URI handlers
+        if ":" in target and not (len(target) > 1 and target[1] == ":"):
+            # Treat as URI (skip drive letters like C:)
+            try:
+                os.startfile(target)
+                return
+            except OSError:
+                pass  # fall through
+
+        # 3) plain executable / file path
+        try:
+            os.startfile(target)
+            return
+        except OSError:
+            pass
+
+        # 4) Last resort: Start-Process via PowerShell (preserves legacy)
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", f'Start-Process "{target}"'],
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or "").strip()
+            raise RuntimeError(f"Failed to open '{original}': {err or 'unknown error'}")
 
     def _open_url(self, url):
         system = platform.system()

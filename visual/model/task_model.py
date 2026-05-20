@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import platform
+import sys
 import threading
 import time
 import uuid
@@ -90,6 +91,7 @@ class TaskModel:
                 "max_steps": max_steps,
                 "session_id": self._session_id,
                 "started_at": ts,
+                "cli": " ".join(sys.argv),
                 "platform": platform.system(),
                 "arch": platform.machine(),
                 "os_version": platform.mac_ver()[0] or platform.version(),

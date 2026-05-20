@@ -9,6 +9,30 @@ from visual.config.visual_config import WINDOW_CONFIG, ANIMATION_CONFIG, TEXT_CO
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
+
+def _get_ctk_window_scaling(root) -> float:
+    """Return the CTk window-scaling factor applied to ``root``.
+
+    customtkinter's ``CTk.geometry("WxH+X+Y")`` multiplies the WxH portion
+    by an internal *window scaling* (capped at 1.5x by CTk on HiDPI displays
+    even when the OS reports 200%), but it does NOT scale the +X+Y portion.
+    Anyone computing right/bottom-anchored positions therefore has to use
+    the *effective* (scaled) pixel size, not the raw config WIDTH/HEIGHT.
+
+    On non-HiDPI / mac / Linux the scaling tracker is normally 1.0 so this
+    is a no-op there. Returns 1.0 on any failure (best-effort).
+    """
+    if root is None:
+        return 1.0
+    try:
+        from customtkinter.windows.widgets.scaling import ScalingTracker
+        scale = float(ScalingTracker.get_window_scaling(root))
+        if scale > 0:
+            return scale
+    except Exception:
+        pass
+    return 1.0
+
 class TaskOverlayView:
     """View layer: pure UI display, receive data through binding, trigger operations through commands"""
 
@@ -95,17 +119,41 @@ class TaskOverlayView:
             return
 
         try:
-            if platform.system() == "Windows":
-                # On Windows, winfo_screenwidth() returns virtual screen (all monitors).
-                # Use ctypes to get primary monitor dimensions.
-                import ctypes
-                user32 = ctypes.windll.user32
-                screen_width = user32.GetSystemMetrics(0)  # SM_CXSCREEN (primary)
-            else:
-                screen_width = self.root.winfo_screenwidth()
+            # Use the same primary-monitor source as the action executor so
+            # the overlay always lands on the screen mano-cua actually drives.
+            # mss exposes left/top, which is critical when the user has
+            # remarked their primary display in a multi-monitor setup
+            # (Mano-P issue #16). Tk's winfo_screenwidth on Windows reports
+            # the virtual screen, which would push the overlay onto the wrong
+            # monitor in extended-display mode.
+            try:
+                import mss as _mss
+                from visual.computer.computer_use_util import get_primary_monitor
+                with _mss.mss() as sct:
+                    pm = get_primary_monitor(sct)
+                primary_left = int(pm["left"])
+                primary_top = int(pm["top"])
+                screen_width = int(pm["width"])
+            except Exception:
+                # Fallback: legacy single-monitor heuristic per platform.
+                primary_left = 0
+                primary_top = 0
+                if platform.system() == "Windows":
+                    import ctypes
+                    user32 = ctypes.windll.user32
+                    screen_width = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+                else:
+                    screen_width = self.root.winfo_screenwidth()
 
-            x = max(WINDOW_CONFIG["MARGIN"], screen_width - WINDOW_CONFIG["WIDTH"] - WINDOW_CONFIG["MARGIN"])
-            y = max(WINDOW_CONFIG["MARGIN"], WINDOW_CONFIG["MARGIN"])
+            # CTk scales WxH but not +X+Y; use effective pixel width so the
+            # right edge actually lands inside the screen on HiDPI Windows.
+            scaling = _get_ctk_window_scaling(self.root)
+            eff_width = int(round(WINDOW_CONFIG["WIDTH"] * scaling))
+            x = primary_left + max(
+                WINDOW_CONFIG["MARGIN"],
+                screen_width - eff_width - WINDOW_CONFIG["MARGIN"],
+            )
+            y = primary_top + WINDOW_CONFIG["MARGIN"]
             self.root.geometry(f"{WINDOW_CONFIG['WIDTH']}x{WINDOW_CONFIG['MIN_HEIGHT']}+{x}+{y}")
         except Exception as e:
             print(f"Window positioning failed: {e}")
@@ -272,12 +320,26 @@ class TaskOverlayView:
             self.minimize_button.configure(text="+")
             self.minimize_button.pack(side="right", padx=(0, 2))
             self.status_label.pack(side="left", padx=(2, 2))
-            # Move to bottom-right corner
+            # Move to bottom-right corner of the *primary* monitor (multi-monitor safe).
             try:
-                screen_width = self.root.winfo_screenwidth()
-                screen_height = self.root.winfo_screenheight()
-                x = screen_width - WINDOW_CONFIG["MINIMIZED_WIDTH"] - WINDOW_CONFIG["MARGIN"]
-                y = screen_height - WINDOW_CONFIG["MINIMIZED_HEIGHT"] - WINDOW_CONFIG["MARGIN"] - 50
+                try:
+                    import mss as _mss
+                    from visual.computer.computer_use_util import get_primary_monitor
+                    with _mss.mss() as sct:
+                        pm = get_primary_monitor(sct)
+                    pm_left, pm_top = int(pm["left"]), int(pm["top"])
+                    screen_width, screen_height = int(pm["width"]), int(pm["height"])
+                except Exception:
+                    pm_left = pm_top = 0
+                    screen_width = self.root.winfo_screenwidth()
+                    screen_height = self.root.winfo_screenheight()
+                # CTk scales WxH but not +X+Y; compensate so the minimized
+                # pill lands flush with the bottom-right on HiDPI Windows.
+                scaling = _get_ctk_window_scaling(self.root)
+                eff_min_w = int(round(WINDOW_CONFIG["MINIMIZED_WIDTH"] * scaling))
+                eff_min_h = int(round(WINDOW_CONFIG["MINIMIZED_HEIGHT"] * scaling))
+                x = pm_left + screen_width - eff_min_w - WINDOW_CONFIG["MARGIN"]
+                y = pm_top + screen_height - eff_min_h - WINDOW_CONFIG["MARGIN"] - 50
             except Exception:
                 x = self._expanded_x
                 y = self._expanded_y
@@ -319,8 +381,13 @@ class TaskOverlayView:
                 # Boundary check: prevent dragging off screen
                 screen_width = self.root.winfo_screenwidth()
                 screen_height = self.root.winfo_screenheight()
-                x = max(0, min(x, screen_width - WINDOW_CONFIG["WIDTH"]))
-                y = max(0, min(y, screen_height - WINDOW_CONFIG["MIN_HEIGHT"]))
+                # Drag boundary uses effective (scaled) size for the same
+                # reason _position_top_right does.
+                scaling = _get_ctk_window_scaling(self.root)
+                eff_w = int(round(WINDOW_CONFIG["WIDTH"] * scaling))
+                eff_h = int(round(WINDOW_CONFIG["MIN_HEIGHT"] * scaling))
+                x = max(0, min(x, screen_width - eff_w))
+                y = max(0, min(y, screen_height - eff_h))
                 self.root.geometry(f"+{x}+{y}")
             except Exception:
                 pass
