@@ -373,6 +373,9 @@ class ComputerActionExecutor:
         restart = tool_input.get("restart", False)
 
         if restart:
+            # Stateless subprocess — no persistent session to restart.
+            # Return success so model doesn't retry, but log a warning.
+            print("  [bash] Warning: restart requested but sessions are stateless (no-op)")
             return {
                 "ok": True,
                 "message": "Bash session restarted",
@@ -393,9 +396,10 @@ class ComputerActionExecutor:
                 # Try PowerShell first
                 try:
                     result = subprocess.run(
-                        ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+                        ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
                         timeout=30,
                         cwd=os.path.expanduser("~"),
                     )
@@ -405,6 +409,7 @@ class ComputerActionExecutor:
                         ["cmd", "/c", command],
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
                         timeout=30,
                         cwd=os.path.expanduser("~"),
                     )
@@ -417,7 +422,9 @@ class ComputerActionExecutor:
                     timeout=30,
                     cwd=os.path.expanduser("~"),
                 )
-            output = result.stdout + result.stderr
+            output = result.stdout
+            if result.stderr:
+                output += f"\n[stderr]\n{result.stderr}"
             # Truncate large output
             if len(output) > 10000:
                 output = output[:10000] + f"\n\n... Output truncated ({len(output)} total chars) ..."
