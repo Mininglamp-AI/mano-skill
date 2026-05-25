@@ -17,7 +17,7 @@ from visual.config.visual_config import AUTOMATION_CONFIG, TASK_STATUS
 from visual.model.task_progress import TaskProgress
 from visual.model.task_state import TaskState
 from visual.computer.computer_use_util import screenshot_to_bytes, get_or_create_device_id, \
-    make_tool_result
+    make_tool_result, strip_tool_results
 
 
 class TaskModel:
@@ -362,25 +362,12 @@ class TaskModel:
                         f.write(screenshot_bytes)
                     break
 
-            # Build tool_results for history (exclude screenshot_b64 to save space)
-            saved_tool_results = []
-            for tr in (tool_results or []):
-                saved_tr = {
-                    "tool_use_id": tr.get("tool_use_id"),
-                    "status": tr.get("status"),
-                    "output": tr.get("output"),
-                    "error": tr.get("error"),
-                }
-                if tr.get("meta"):
-                    saved_tr["meta"] = tr["meta"]
-                saved_tool_results.append(saved_tr)
-
             step_data = {
                 "step": step_idx,
                 "reasoning": reasoning,
                 "action_desc": action_desc,
                 "actions": [{"name": a.get("name"), "input": a.get("input"), "action_type": a.get("action_type")} for a in actions],
-                "tool_results": saved_tool_results,
+                "tool_results": strip_tool_results(tool_results),
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
             history_path = os.path.join(self._trajectory_dir, "history.jsonl")
