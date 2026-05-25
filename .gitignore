@@ -2,6 +2,8 @@ result/
 .vscode/
 __pycache__/
 __init.py__
+.DS_Store
+tests/
 
 build
 dist
