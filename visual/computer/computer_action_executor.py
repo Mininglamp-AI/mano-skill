@@ -363,7 +363,11 @@ class ComputerActionExecutor:
             raise RuntimeError(f"Failed to open {url}: {e}")
 
     def _run_bash(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute bash command and return output"""
+        """Execute shell command and return output.
+
+        On Windows: PowerShell first, cmd as fallback.
+        On macOS/Linux: /bin/sh via shell=True.
+        """
         start_time = time.time()
         command = tool_input.get("command")
         restart = tool_input.get("restart", False)
@@ -385,14 +389,34 @@ class ComputerActionExecutor:
             }
 
         try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                cwd=os.path.expanduser("~"),
-            )
+            if platform.system() == "Windows":
+                # Try PowerShell first
+                try:
+                    result = subprocess.run(
+                        ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        cwd=os.path.expanduser("~"),
+                    )
+                except FileNotFoundError:
+                    # PowerShell not found, fallback to cmd
+                    result = subprocess.run(
+                        ["cmd", "/c", command],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        cwd=os.path.expanduser("~"),
+                    )
+            else:
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    cwd=os.path.expanduser("~"),
+                )
             output = result.stdout + result.stderr
             # Truncate large output
             if len(output) > 10000:

@@ -10,6 +10,7 @@ CONFIG_DEFAULTS = {
     "max-steps": "100",
     "minimize": "false",
     "save-trajectory": "false",
+    "disable-bash": "false",
 }
 
 CONFIG_KEYS = {
@@ -19,6 +20,7 @@ CONFIG_KEYS = {
     "max-steps":          f"Maximum steps per task (default: {CONFIG_DEFAULTS['max-steps']})",
     "minimize":           f"Start with minimized UI panel: true/false (default: {CONFIG_DEFAULTS['minimize']})",
     "save-trajectory":    f"Save screenshots and actions per step: true/false (default: {CONFIG_DEFAULTS['save-trajectory']})",
+    "disable-bash":       f"Disable bash tool capability in cloud mode: true/false (default: {CONFIG_DEFAULTS['disable-bash']})",
 }
 
 

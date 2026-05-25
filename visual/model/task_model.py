@@ -351,7 +351,7 @@ class TaskModel:
 
     # ========== Trajectory Saving ==========
     def _save_step_trajectory(self, step_idx, reasoning, actions, action_desc, tool_results):
-        """Save screenshot + action metadata for one step."""
+        """Save screenshot + action metadata + tool results for one step."""
         try:
             for tr in reversed(tool_results or []):
                 b64 = tr.get("screenshot_b64")
@@ -362,11 +362,25 @@ class TaskModel:
                         f.write(screenshot_bytes)
                     break
 
+            # Build tool_results for history (exclude screenshot_b64 to save space)
+            saved_tool_results = []
+            for tr in (tool_results or []):
+                saved_tr = {
+                    "tool_use_id": tr.get("tool_use_id"),
+                    "status": tr.get("status"),
+                    "output": tr.get("output"),
+                    "error": tr.get("error"),
+                }
+                if tr.get("meta"):
+                    saved_tr["meta"] = tr["meta"]
+                saved_tool_results.append(saved_tr)
+
             step_data = {
                 "step": step_idx,
                 "reasoning": reasoning,
                 "action_desc": action_desc,
                 "actions": [{"name": a.get("name"), "input": a.get("input"), "action_type": a.get("action_type")} for a in actions],
+                "tool_results": saved_tool_results,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             }
             history_path = os.path.join(self._trajectory_dir, "history.jsonl")
