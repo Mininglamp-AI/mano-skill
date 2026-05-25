@@ -314,8 +314,12 @@ def run_task(task: str, expected_result: str = None, minimize: bool = False,
             body = {
                 "task": task,
                 "device_id": device_id,
-                "platform": platform.system()
+                "platform": platform.system(),
             }
+            # Add bash capability unless disabled
+            from visual.config.user_config import get_config
+            if get_config("disable-bash") != "true":
+                body["capabilities"] = ["bash"]
             if expected_result:
                 body["expected_result"] = expected_result
 

@@ -80,6 +80,21 @@ def make_tool_result(tool_use_id: str, ok: bool, message: str,
         tr["screenshot_b64"] = b64_png(screenshot_bytes)
     return tr
 
+def strip_tool_results(tool_results: list) -> list:
+    """Strip screenshot_b64 from tool_results for lightweight storage."""
+    stripped = []
+    for tr in (tool_results or []):
+        entry = {
+            "tool_use_id": tr.get("tool_use_id"),
+            "status": tr.get("status"),
+            "output": tr.get("output"),
+            "error": tr.get("error"),
+        }
+        if tr.get("meta"):
+            entry["meta"] = tr["meta"]
+        stripped.append(entry)
+    return stripped
+
 def focus_on_primary_screen():
     """Focus mouse on primary screen center"""
     with mss.mss() as sct:
