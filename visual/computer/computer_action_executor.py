@@ -393,13 +393,21 @@ class ComputerActionExecutor:
 
         try:
             if platform.system() == "Windows":
+                # Inject UTF-8 output encoding for PowerShell 5.1
+                # (default is system locale = GBK on Chinese Windows)
+                ps_command = (
+                    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+                    "$OutputEncoding = [System.Text.Encoding]::UTF8; "
+                    f"{command}"
+                )
                 # Try PowerShell first
                 try:
                     result = subprocess.run(
-                        ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+                        ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_command],
                         capture_output=True,
                         text=True,
                         encoding="utf-8",
+                        errors="replace",
                         timeout=30,
                         cwd=os.path.expanduser("~"),
                     )
@@ -410,6 +418,7 @@ class ComputerActionExecutor:
                         capture_output=True,
                         text=True,
                         encoding="utf-8",
+                        errors="replace",
                         timeout=30,
                         cwd=os.path.expanduser("~"),
                     )
