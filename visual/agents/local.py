@@ -145,6 +145,7 @@ finish() # The task is completed.
 
         # Save raw response to file
         self._save_raw_response(response_text)
+        self.last_raw_response = response_text
 
         # 4. Parse response
         parsed = self._parse_response(response_text)
@@ -230,7 +231,7 @@ finish() # The task is completed.
         import platform as _platform
         images: list = []
         history_count = self.cfg["HISTORY_IMAGE_COUNT"]
-        recent = self.prompt_history[-(history_count + 1):]
+        recent = self.prompt_history[-history_count:] if history_count else []
 
         history_parts = []
         for i, h in enumerate(self.prompt_history):
@@ -238,17 +239,17 @@ finish() # The task is completed.
             desc = h["desc"]
             if h in recent and h.get("screenshot_b64"):
                 images.append(h["screenshot_b64"])
-                history_parts.append(f"第{step_num}步：{desc}，对应的截图为<image>")
+                history_parts.append(f"第{step_num}步：{desc}，对应截图为<image>")
             else:
                 history_parts.append(f"第{step_num}步：{desc}")
 
-        history_text = "\n".join(history_parts) if history_parts else "无"
-
-        instruction_parts = [f"### task: {task}"]
-        instruction_parts.append(f"### action history: {history_text}")
+        instruction_parts = [task]
+        if history_parts:
+            instruction_parts.append("")
+            instruction_parts.extend(history_parts)
         if current_screenshot_b64:
             images.append(current_screenshot_b64)
-            instruction_parts.append("当前截图为<image>")
+            instruction_parts.append("当前步骤的截图为<image>")
 
         text = self.INSTRUCTION_TEMPLATE.format(
             platform=_platform.system(),
@@ -315,7 +316,13 @@ finish() # The task is completed.
 
     def _extract_tag(self, text: str, tag: str) -> Optional[str]:
         m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
-        return m.group(1) if m else None
+        if m:
+            return m.group(1)
+        # Thinking mode: content before </think> without opening <think> tag
+        if tag == "think":
+            m = re.search(r"^(.*?)</think>", text, re.DOTALL)
+            return m.group(1) if m else None
+        return None
 
     def _parse_box(self, box_str: str) -> list:
         m = re.search(r"\((\d+)\s*,\s*(\d+)\)", box_str)

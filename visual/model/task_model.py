@@ -369,6 +369,7 @@ class TaskModel:
                 "actions": [{"name": a.get("name"), "input": a.get("input"), "action_type": a.get("action_type")} for a in actions],
                 "tool_results": strip_tool_results(tool_results),
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "raw_response": getattr(self.agent, "last_raw_response", None),
             }
             history_path = os.path.join(self._trajectory_dir, "history.jsonl")
             with open(history_path, "a", encoding="utf-8") as f:
