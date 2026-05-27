@@ -409,14 +409,26 @@ def cmd_config(args):
                     print("  You may need to install: mlx-vlm, torch, cider (compiled from git)")
             else:
                 print(f"  Warning: {py} not found")
-        # Setting default-model-path: verify model exists
+        # Setting default-model-path: verify model exists and is MLX format
         if args.set[0] == "default-model-path":
             expanded = os.path.expanduser(args.set[1])
-            if os.path.isdir(expanded):
-                set_config("model-installed", "true")
-                print(f"  Model verified. model-installed = true")
-            else:
-                print(f"  Warning: path not found — {expanded}")
+            if not os.path.isdir(expanded):
+                print(f"  Error: path not found — {expanded}")
+                return 1
+            # Check for MLX format (should have weights/*.safetensors or *.npz, NOT model-*.safetensors in root)
+            has_mlx_weights = os.path.isdir(os.path.join(expanded, "weights")) or \
+                any(f.endswith(".npz") for f in os.listdir(expanded))
+            has_hf_shards = any(f.startswith("model-") and f.endswith(".safetensors") for f in os.listdir(expanded))
+            if has_hf_shards and not has_mlx_weights:
+                print(f"  Error: model at {expanded} appears to be HuggingFace fp16 format, not MLX.")
+                print(f"  Local mode requires MLX w8a16 quantized weights.")
+                print(f"  Convert with:")
+                print(f"    python -m mlx_vlm.convert --hf-path {expanded} --mlx-path {expanded}_mlx_w8a16 -q --q-bits 8 --dtype float16")
+                print(f"  Then set the converted path:")
+                print(f"    mano-cua config --set default-model-path {expanded}_mlx_w8a16")
+                return 1
+            set_config("model-installed", "true")
+            print(f"  Model verified. model-installed = true")
         return 0
 
     print("Usage: mano-cua config [--list | --get KEY | --set KEY VALUE]")
