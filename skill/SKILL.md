@@ -12,7 +12,7 @@ Desktop GUI automation for tasks via VLA models. Use when the user describes a t
 ## Requirements
 
 - A system with a **graphical desktop** (macOS / Windows / Linux)
-- `mano-cua` binary installed
+- `mano-cua` binary installed (v1.1.0+ recommended for full feature support)
 
 ### Installation
 
@@ -35,13 +35,13 @@ Download the latest `mano-cua-windows.zip` from [GitHub Releases](https://github
 # Run a task
 mano-cua run "your task description"
 
-# Run with options(minimize UI panel and set max steps)
+# Run with options (minimize UI panel and set max steps)
 mano-cua run "task" --minimize --max-steps 10
 
 # Open a URL in the browser before starting the task
 mano-cua run "task" --url "https://example.com"
 
-# Open an app before starting the task (use the macOS app name, e.g. 'Notes', 'Safari', 'Google Chrome')
+# Open an app before starting the task
 mano-cua run "task" --app "Notes"
 
 # Run in local mode (on-device inference, macOS Apple Silicon only)
@@ -55,13 +55,26 @@ Run `mano-cua --help` or `mano-cua <command> --help` for full flags and options.
 
 > **Note:** Only one task can run at a time per device. If you need to start a new task, first stop the current one with `mano-cua stop`.
 
-> **--app vs --url:** Use one or the other, not both. `--app` launches a desktop application by its macOS name (as shown in Spotlight search). `--url` opens a URL in the default browser. Both bring the target to the foreground before the agent starts.
+> **--app vs --url:** Use one or the other, not both. `--app` launches a desktop application by name. `--url` opens a URL in the default browser. Both bring the target to the foreground before the agent starts.
 
-> **Tip for local mode:** Write task descriptions with explicit step-by-step instructions for best results. For example, instead of "search for iphone on Xiaohongshu", write "click the search box at the top, type iphone, click the search button, then click the first result". Explicit steps significantly improve local model accuracy.
+> **Troubleshooting:** If tasks fail unexpectedly or features described below are unavailable, ensure your CLI is up to date: `brew upgrade Mininglamp-AI/tap/mano-cua`.
+
+## Configuration
+
+```bash
+mano-cua config --list                        # Show all settings
+mano-cua config --set max-steps 50            # Set default max steps
+mano-cua config --set minimize true           # Always start with UI panel minimized
+mano-cua config --set disable-bash true       # Disable shell tool in cloud mode
+```
 
 ## Local Mode
 
-Runs [Mano-P](https://huggingface.co/Mininglamp-2718/Mano-P) entirely on-device via MLX. No data leaves the machine. Requires macOS with Apple Silicon (M1+). To use local mode, pass `--local`. Highly recommended to add `--url` or `--app` arg when using local mode to improve efficiency and accuracy.
+Runs [Mano-P](https://huggingface.co/Mininglamp-2718/Mano-P) entirely on-device via MLX. No data leaves the machine. **Requires macOS with Apple Silicon (M1+).** The local model is lightweight (4B) — clarify the user's instruction and add context that the model may not infer on its own. Use `--app` or `--url` to set the starting context.
+
+> **Tips for local mode:**
+> - Vague instructions need specifics: "look up AI news" → `"Search for artificial intelligence news and open the first result"` with `--url "https://www.google.com"`
+> - Tasks requiring domain knowledge need context: "adjust screen brightness" → `"Adjust screen brightness to 50% in System Settings > Display"` with `--app "System Settings"`
 
 **Setup:**
 
@@ -69,22 +82,31 @@ Runs [Mano-P](https://huggingface.co/Mininglamp-2718/Mano-P) entirely on-device 
 mano-cua check
 mano-cua install-sdk
 mano-cua install-model
+
+# Optional: use a custom Python environment or model path if dependencies or weights are already in local
+mano-cua config --set python-path /path/to/.venv/bin/python
+mano-cua config --set default-model-path /path/to/model-weights
 ```
+
+> **Model format:** Local mode expects MLX w8a16 quantized weights for optimal performance. If your model is in fp16, convert it first:
+> ```bash
+> python -m mlx_vlm.convert --hf-path /path/to/fp16-model --mlx-path /path/to/output-w8a16 -q --q-bits 8 --dtype float16
+> ```
 
 **Run:**
 
 ```bash
-mano-cua run "click the search box, type openai, click search, click the first result to open OpenAI homepage" --local --url "https://www.google.com"
-mano-cua run "click the search box, type iphone, click the search button, open the first post" --local --url "https://www.xiaohongshu.com" --minimize --max-steps 15
-mano-cua run "create a new note and type hello world" --local --app "Notes"
+mano-cua run "Search for openai on Google and open the first result" --local --url "https://www.google.com"
+mano-cua run "Search for iphone on Xiaohongshu and open the first post" --local --url "https://www.xiaohongshu.com" --minimize --max-steps 15
+mano-cua run "Create a new note titled hello world" --local --app "Notes"
 ```
 
 ## Examples
 
 ```bash
 # Local mode (recommended for privacy — all inference on-device, no data leaves the machine)
-mano-cua run "click the search box, type openai, click search, click the first result" --local --url "https://www.google.com" --minimize
-mano-cua run "create a new note and type hello world" --local --app "Notes"
+mano-cua run "Search for openai on Google and open the first result" --local --url "https://www.google.com" --minimize
+mano-cua run "Create a new note titled hello world" --local --app "Notes"
 
 # Cloud mode
 mano-cua run "Open Notes and create a new note titled Meeting Summary"
@@ -94,13 +116,16 @@ mano-cua run "Search for AI news in the browser and show the first result" --min
 mano-cua run "Create a calendar event for Friday 20:00 named Team Meeting" --app "Microsoft Outlook"
 mano-cua run "Compare available plans for the AeroAPI" --url "https://www.flightaware.com/"
 
+# Cloud mode — shell tool used for applicable steps to reduce time and improve accuracy (v1.1.0+)
+mano-cua run "Create a file called report.txt on the Desktop with the content 'Q2 revenue summary', then mark it with a red tag in Finder"
+
 # Stop the current task (use before starting a new one)
 mano-cua stop
 ```
 
 ## How It Works
 
-At each step, the current screen state is analyzed by a hybrid vision model to decide the next action. The agent performs bounded GUI actions (click, type, scroll, drag) only within the user-specified task scope, visible foreground target, and configured step/session limits. For sensitive or irreversible actions, the agent pauses and prompts the user for explicit confirmation before proceeding.
+At each step, the current screen state is analyzed by a hybrid vision model to decide the next action. The agent performs bounded GUI actions (click, type, scroll, drag) only within the user-specified task scope, visible foreground target, and configured step/session limits. In cloud mode, when certain steps can be accomplished via shell, a shell tool will be invoked to perform the action rather than GUI operations to reduce steps and improve accuracy (requires v1.1.0+). For sensitive or irreversible actions, the agent pauses and prompts the user for explicit confirmation before proceeding.
 
 Hybrid vision model:
 - **Mano-P model** — handles straightforward, lightweight tasks with rapid output.
@@ -108,16 +133,16 @@ Hybrid vision model:
 
 The system automatically selects the appropriate model based on task complexity.
 
-In **local mode (`--local`)**, a local Mano-P model runs on-device via MLX. No network calls for inference.
+In **local mode (`--local`)**, a local Mano-P model runs on-device via MLX. No network calls for inference. Local mode is only supported on macOS with Apple Silicon.
 
 **Structural capability boundaries (what the tool cannot do):**
 
 - Cannot run in the background or persist between sessions — each invocation is a single, short-lived task.
-- Cannot access the filesystem, clipboard, network, or any data beyond what is visible on the primary display.
 - Cannot interact with secondary monitors — only the primary display is used.
 - Cannot bypass OS-level permission dialogs or security prompts.
-- Cannot execute shell commands, install software, or modify system settings.
 - Cannot access stored passwords, tokens, cookies, or credential managers — it can only see and interact with what is visually rendered on screen.
+- In local mode, cannot execute shell commands or access the filesystem beyond what is visible on screen.
+- In cloud mode, the shell tool may be used when it can accomplish a step more efficiently. This capability can be disabled via `mano-cua config --set disable-bash true`.
 
 ## Status Panel
 
@@ -148,4 +173,4 @@ A small UI panel is displayed on the top-right corner of the screen to track and
 
 ## Platform Support
 
-macOS is the preferred and most tested platform. Adaptations for Windows and Linux are not yet fully completed — minor issues are expected.
+macOS is the primary and most tested platform. Windows adaptation has been completed with full support for GUI automation in cloud mode. Local mode (on-device inference) is only available on macOS with Apple Silicon. Linux support is functional but less tested — minor issues are expected.
