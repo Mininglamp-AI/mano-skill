@@ -559,21 +559,21 @@ def cmd_install_model(args):
         print("On Windows / Linux, use cloud mode — no model download needed.")
         return 2
 
-    model_name = args.name or "Mininglamp-2718/Mano-P"
-    model_dir = os.path.expanduser("~/.mano/models/Mano-P")
+    model_name = args.name or "Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+    model_dir = os.path.expanduser("~/.mano/models/Mano-CUA-4B-Thinking-1.1-MLX-8bit")
 
     print(f"Downloading model: {model_name}\n")
     print("Option 1: Download from webpage")
-    print(f"  https://huggingface.co/{model_name}/tree/main/w8a16")
+    print(f"  https://huggingface.co/{model_name}")
     print(f"  Download all files, then:")
-    print(f"  mano-cua config --set default-model-path /path/to/w8a16\n")
+    print(f"  mano-cua config --set default-model-path /path/to/model\n")
     print("Option 2: Download via CLI (requires HuggingFace token)")
     print("  1. Create a token at https://huggingface.co/settings/tokens ")
     print("  2. Run: hf auth login")
     print(f"  3. Downloading now...\n")
 
     result = subprocess.run(
-        ["hf", "download", model_name, "--include", "w8a16/*", "--local-dir", model_dir]
+        ["hf", "download", model_name, "--local-dir", model_dir]
     )
     if result.returncode != 0:
         print(f"\nDownload failed. Make sure you are logged in:")
@@ -583,9 +583,7 @@ def cmd_install_model(args):
         print(f"  mano-cua config --set default-model-path /path/to/model")
         return 1
 
-    model_path = os.path.join(model_dir, "w8a16")
-    if not os.path.isdir(model_path):
-        model_path = model_dir
+    model_path = model_dir
 
     from visual.config.user_config import set_config
     set_config("default-model-path", model_path)
@@ -626,7 +624,7 @@ def main():
 
     # --- install-model ---
     install_parser = subparsers.add_parser("install-model", help="Download model from HuggingFace")
-    install_parser.add_argument("name", nargs="?", help="Model name (default: Mininglamp-2718/Mano-P)")
+    install_parser.add_argument("name", nargs="?", help="Model name (default: Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit)")
 
     args = parser.parse_args()
 
