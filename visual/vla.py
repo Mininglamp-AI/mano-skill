@@ -510,8 +510,10 @@ def cmd_install_sdk(args):
     pip_cmd = [venv_python, "-m", "pip"]
 
     # 1. Base deps (same as brew venv — needed for mano-cua to run)
+    #    huggingface_hub provides `hf`, modelscope provides `modelscope` — both
+    #    download CLIs are installed so install-model can use either source.
     print(f"  Installing base dependencies...")
-    result = subprocess.run(pip_cmd + ["install", "requests", "mss", "pynput", "customtkinter", "Pillow", "huggingface_hub"], capture_output=True)
+    result = subprocess.run(pip_cmd + ["install", "requests", "mss", "pynput", "customtkinter", "Pillow", "huggingface_hub", "modelscope"], capture_output=True)
     if result.returncode != 0:
         print(f"  Base dependencies installation failed.")
         return 1
@@ -547,8 +549,46 @@ def cmd_install_sdk(args):
     print("Run 'mano-cua check' to verify.")
     return 0
 
+def _hf_reachable(timeout=3):
+    """Probe whether huggingface.co is reachable over the network.
+
+    Used to auto-select a download source. We test real TCP reachability
+    rather than guessing by region/IP version — IPv4/IPv6 says nothing about
+    whether HuggingFace is actually accessible from this machine.
+    """
+    import socket
+    try:
+        socket.create_connection(("huggingface.co", 443), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+def _ensure_cli(name, package):
+    """Return the path to a venv CLI binary, pip-installing `package` if missing.
+
+    install-sdk installs both download CLIs, but a user may be on an older venv
+    or a custom python-path that lacks one. This is the secondary safety check:
+    if the binary is absent we install it into the same env before use.
+    """
+    import subprocess
+    cmd = os.path.join(os.path.dirname(sys.executable), name)
+    if os.path.exists(cmd):
+        return cmd
+    print(f"  {name} CLI not found — installing {package}...")
+    result = subprocess.run([sys.executable, "-m", "pip", "install", package])
+    if result.returncode != 0 or not os.path.exists(cmd):
+        return None
+    return cmd
+
+
 def cmd_install_model(args):
-    """Download model weights from HuggingFace or ModelScope"""
+    """Download model weights from HuggingFace or modelscope.cn.
+
+    Both sources host the identical model. In auto mode (default) we probe the
+    network and pick a single source. On failure we don't fall back — the error
+    output tells the caller (or agent) to retry with the other --source.
+    """
     import subprocess
 
     if platform.system() != "Darwin":
@@ -556,46 +596,40 @@ def cmd_install_model(args):
         print("On Windows / Linux, use cloud mode — no model download needed.")
         return 2
 
-    source = getattr(args, 'source', 'modelscope')
-
-    if source == 'modelscope':
-        model_name = "Mininglamp2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
-    else:
-        model_name = args.name or "Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+    source = getattr(args, 'source', 'auto')
+    if source == 'auto':
+        source = 'hf' if _hf_reachable() else 'modelscope'
+        print(f"Auto-selected source: {source} "
+              f"(HuggingFace {'reachable' if source == 'hf' else 'unreachable'})\n")
 
     model_dir = os.path.expanduser("~/.mano/models/Mano-CUA-4B-Thinking-1.1-MLX-8bit")
+    other = 'modelscope' if source == 'hf' else 'hf'
 
-    source_label = "ModelScope" if source == "modelscope" else "HuggingFace"
-    print(f"Downloading model from {source_label}: {model_name}\n")
     if source == 'modelscope':
-        print("Downloading via ModelScope CLI...")
-        modelscope_cmd = os.path.join(os.path.dirname(sys.executable), "modelscope")
-        result = subprocess.run([modelscope_cmd, "download", "--model", model_name, "--local_dir", model_dir])
-        
+        model_name = args.name or "Mininglamp2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+        print(f"Downloading from modelscope.cn: {model_name}")
+        cmd = _ensure_cli("modelscope", "modelscope")
+        if not cmd:
+            print("\nCould not obtain the modelscope CLI (pip install modelscope failed).")
+            print(f"Retry, or switch source: mano-cua install-model --source {other}")
+            return 1
+        result = subprocess.run([cmd, "download", "--model", model_name, "--local_dir", model_dir])
     else:
-        print("Option 1: Download from webpage")
-        print(f"  https://huggingface.co/{model_name}")
-        print(f"  Download all files, then:")
-        print(f"  mano-cua config --set default-model-path /path/to/model\n")
-        print("Option 2: Download via CLI (requires HuggingFace token)")
-        print("  1. Create a token at https://huggingface.co/settings/tokens")
-        print("  2. Run: hf auth login")
-        print(f"  3. Downloading now...\n")
-        hf_cmd = os.path.join(os.path.dirname(sys.executable), "hf")
-        result = subprocess.run(
-            [hf_cmd, "download", model_name, "--local-dir", model_dir]
-        )
+        model_name = args.name or "Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+        print(f"Downloading from HuggingFace: {model_name}")
+        cmd = _ensure_cli("hf", "huggingface_hub")
+        if not cmd:
+            print("\nCould not obtain the HuggingFace CLI (pip install huggingface_hub failed).")
+            print(f"Retry, or switch source: mano-cua install-model --source {other}")
+            return 1
+        result = subprocess.run([cmd, "download", model_name, "--local-dir", model_dir])
 
     if result.returncode != 0:
-        print(f"\nDownload failed.")
-        if source == 'modelscope':
-            print("Make sure modelscope is installed: pip install modelscope")
-            print("Then run: mano-cua install-model --source modelscope")
-        else:
-            print("Make sure you are logged in: hf auth login")
-            print("Then run: mano-cua install-model --source hf")
+        print(f"\nDownload failed from {source}.")
+        print(f"Retry, or switch source: mano-cua install-model --source {other}")
         return 1
 
+    source_label = "modelscope.cn" if source == "modelscope" else "HuggingFace"
     from visual.config.user_config import set_config
     set_config("default-model-path", model_dir)
     set_config("model-installed", "true")
@@ -635,9 +669,13 @@ def main():
     subparsers.add_parser("install-sdk", help="Install local inference SDK (mlx-vlm + cider)")
 
     # --- install-model ---
-    install_parser = subparsers.add_parser("install-model", help="Download model from HuggingFace or ModelScope")
-    install_parser.add_argument("name", nargs="?", help="Model name (default: ...)")
-    install_parser.add_argument("--source", choices=["hf", "modelscope"], default="modelscope",help="Download source: hf (HuggingFace) or modelscope (default)")
+    install_parser = subparsers.add_parser(
+        "install-model",
+        help="Download the model; auto-selects an available source (HuggingFace/modelscope.cn), or pin one with --source")
+    install_parser.add_argument("name", nargs="?", help="Model name (default: source-specific official repo)")
+    install_parser.add_argument(
+        "--source", choices=["hf", "modelscope", "auto"], default="auto",
+        help="Download source: hf (HuggingFace), modelscope (modelscope.cn), or auto (probe network, default)")
 
     args = parser.parse_args()
 
