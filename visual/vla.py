@@ -546,49 +546,61 @@ def cmd_install_sdk(args):
     print(f"\nSDK ready. Python path set to: {venv_python}")
     print("Run 'mano-cua check' to verify.")
     return 0
-    return 0
-
 
 def cmd_install_model(args):
-    """Download model weights from HuggingFace"""
+    """Download model weights from HuggingFace or ModelScope"""
     import subprocess
 
-    # Model is for local mode only; same Apple-Silicon-only constraint.
     if platform.system() != "Darwin":
         print("Error: install-model is for local mode (macOS Apple Silicon only).")
         print("On Windows / Linux, use cloud mode — no model download needed.")
         return 2
 
-    model_name = args.name or "Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+    source = getattr(args, 'source', 'modelscope')
+
+    if source == 'modelscope':
+        model_name = "Mininglamp2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+    else:
+        model_name = args.name or "Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+
     model_dir = os.path.expanduser("~/.mano/models/Mano-CUA-4B-Thinking-1.1-MLX-8bit")
 
-    print(f"Downloading model: {model_name}\n")
-    print("Option 1: Download from webpage")
-    print(f"  https://huggingface.co/{model_name}")
-    print(f"  Download all files, then:")
-    print(f"  mano-cua config --set default-model-path /path/to/model\n")
-    print("Option 2: Download via CLI (requires HuggingFace token)")
-    print("  1. Create a token at https://huggingface.co/settings/tokens ")
-    print("  2. Run: hf auth login")
-    print(f"  3. Downloading now...\n")
+    source_label = "ModelScope" if source == "modelscope" else "HuggingFace"
+    print(f"Downloading model from {source_label}: {model_name}\n")
+    if source == 'modelscope':
+        print("Downloading via ModelScope CLI...")
+        modelscope_cmd = os.path.join(os.path.dirname(sys.executable), "modelscope")
+        result = subprocess.run([modelscope_cmd, "download", "--model", model_name, "--local_dir", model_dir])
+        
+    else:
+        print("Option 1: Download from webpage")
+        print(f"  https://huggingface.co/{model_name}")
+        print(f"  Download all files, then:")
+        print(f"  mano-cua config --set default-model-path /path/to/model\n")
+        print("Option 2: Download via CLI (requires HuggingFace token)")
+        print("  1. Create a token at https://huggingface.co/settings/tokens")
+        print("  2. Run: hf auth login")
+        print(f"  3. Downloading now...\n")
+        hf_cmd = os.path.join(os.path.dirname(sys.executable), "hf")
+        result = subprocess.run(
+            [hf_cmd, "download", model_name, "--local-dir", model_dir]
+        )
 
-    result = subprocess.run(
-        ["hf", "download", model_name, "--local-dir", model_dir]
-    )
     if result.returncode != 0:
-        print(f"\nDownload failed. Make sure you are logged in:")
-        print(f"  hf auth login")
-        print(f"  Then run: mano-cua install-model")
-        print(f"\nOr download manually and set path:")
-        print(f"  mano-cua config --set default-model-path /path/to/model")
+        print(f"\nDownload failed.")
+        if source == 'modelscope':
+            print("Make sure modelscope is installed: pip install modelscope")
+            print("Then run: mano-cua install-model --source modelscope")
+        else:
+            print("Make sure you are logged in: hf auth login")
+            print("Then run: mano-cua install-model --source hf")
         return 1
 
-    model_path = model_dir
-
     from visual.config.user_config import set_config
-    set_config("default-model-path", model_path)
+    set_config("default-model-path", model_dir)
     set_config("model-installed", "true")
-    print(f"\nModel ready: {model_path}")
+    print(f"\nModel ready: {model_dir}")
+    print(f"Source: {source_label}")
     return 0
 
 
@@ -623,8 +635,9 @@ def main():
     subparsers.add_parser("install-sdk", help="Install local inference SDK (mlx-vlm + cider)")
 
     # --- install-model ---
-    install_parser = subparsers.add_parser("install-model", help="Download model from HuggingFace")
-    install_parser.add_argument("name", nargs="?", help="Model name (default: Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit)")
+    install_parser = subparsers.add_parser("install-model", help="Download model from HuggingFace or ModelScope")
+    install_parser.add_argument("name", nargs="?", help="Model name (default: ...)")
+    install_parser.add_argument("--source", choices=["hf", "modelscope"], default="modelscope",help="Download source: hf (HuggingFace) or modelscope (default)")
 
     args = parser.parse_args()
 

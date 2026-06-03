@@ -81,7 +81,9 @@ Runs [Mano-P](https://huggingface.co/Mininglamp-2718/Mano-P) entirely on-device 
 ```bash
 mano-cua check
 mano-cua install-sdk
-mano-cua install-model
+mano-cua install-model                       # 默认从 ModelScope 下载
+mano-cua install-model --source modelscope   # 指定从 ModelScope 下载
+mano-cua install-model --source hf           # 指定从 HuggingFace 下载
 
 # Optional: use a custom Python environment or model path if dependencies or weights are already in local
 mano-cua config --set python-path /path/to/.venv/bin/python
