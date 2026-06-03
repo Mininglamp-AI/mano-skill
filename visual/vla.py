@@ -604,29 +604,39 @@ def cmd_install_model(args):
 
     model_dir = os.path.expanduser("~/.mano/models/Mano-CUA-4B-Thinking-1.1-MLX-8bit")
     other = 'modelscope' if source == 'hf' else 'hf'
+    hf_repo = "Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+    ms_repo = "Mininglamp2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+
+    def _print_manual_help():
+        print(f"\n- Switch source: mano-cua install-model --source {other}")
+        print("- Or download manually from either page (same model):")
+        print(f"    HuggingFace:   https://huggingface.co/{hf_repo}")
+        print(f"    modelscope.cn: https://www.modelscope.cn/models/{ms_repo}")
+        print("  then point the client at it:")
+        print("    mano-cua config --set default-model-path /path/to/model")
 
     if source == 'modelscope':
-        model_name = args.name or "Mininglamp2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+        model_name = args.name or ms_repo
         print(f"Downloading from modelscope.cn: {model_name}")
         cmd = _ensure_cli("modelscope", "modelscope")
         if not cmd:
             print("\nCould not obtain the modelscope CLI (pip install modelscope failed).")
-            print(f"Retry, or switch source: mano-cua install-model --source {other}")
+            _print_manual_help()
             return 1
         result = subprocess.run([cmd, "download", "--model", model_name, "--local_dir", model_dir])
     else:
-        model_name = args.name or "Mininglamp-2718/Mano-CUA-4B-Thinking-1.1-MLX-8bit"
+        model_name = args.name or hf_repo
         print(f"Downloading from HuggingFace: {model_name}")
         cmd = _ensure_cli("hf", "huggingface_hub")
         if not cmd:
             print("\nCould not obtain the HuggingFace CLI (pip install huggingface_hub failed).")
-            print(f"Retry, or switch source: mano-cua install-model --source {other}")
+            _print_manual_help()
             return 1
         result = subprocess.run([cmd, "download", model_name, "--local-dir", model_dir])
 
     if result.returncode != 0:
         print(f"\nDownload failed from {source}.")
-        print(f"Retry, or switch source: mano-cua install-model --source {other}")
+        _print_manual_help()
         return 1
 
     source_label = "modelscope.cn" if source == "modelscope" else "HuggingFace"
