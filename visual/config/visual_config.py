@@ -4,7 +4,7 @@ import subprocess as _subprocess
 BASE_URL = "https://mano.mininglamp.com"
 
 # Client version — keep in sync with brew formula
-CLIENT_VERSION = "1.0.8"
+CLIENT_VERSION = "1.1.3"
 
 def _get_chip_model() -> str:
     """Get Apple chip model (e.g. 'Apple M4 Pro') on macOS, empty string otherwise."""

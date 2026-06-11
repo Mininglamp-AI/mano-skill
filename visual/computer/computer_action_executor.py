@@ -1,5 +1,6 @@
 import os
 import platform
+import shutil
 import subprocess
 import time
 from typing import Any, Dict
@@ -11,6 +12,32 @@ from pynput.mouse import Button
 
 from visual.config.visual_config import AUTOMATION_CONFIG
 from visual.computer.computer_use_util import get_primary_monitor
+
+
+# Common Git-for-Windows install locations to probe when bash is not on PATH.
+# Covers default Program Files (64/32-bit), the per-user installer, and scoop.
+_WINDOWS_BASH_CANDIDATES = (
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"C:\Program Files\Git\usr\bin\bash.exe",
+    r"C:\Program Files (x86)\Git\bin\bash.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\bin\bash.exe"),
+    os.path.expandvars(r"%USERPROFILE%\scoop\apps\git\current\bin\bash.exe"),
+)
+
+
+def _find_windows_bash():
+    """Locate a bash.exe on Windows. AGENT_SHELL override, then PATH, then known
+    Git-for-Windows paths. Returns None if none found (caller surfaces an error)."""
+    override = os.environ.get("AGENT_SHELL", "")
+    if override:
+        return override if os.path.isfile(override) else None
+    on_path = shutil.which("bash")
+    if on_path:
+        return on_path
+    for cand in _WINDOWS_BASH_CANDIDATES:
+        if cand and os.path.isfile(cand):
+            return cand
+    return None
 
 
 class ComputerActionExecutor:
@@ -365,7 +392,7 @@ class ComputerActionExecutor:
     def _run_bash(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         """Execute shell command and return output.
 
-        On Windows: PowerShell first, cmd as fallback.
+        On Windows: Git-for-Windows bash (errors clearly if not found).
         On macOS/Linux: /bin/sh via shell=True.
         """
         start_time = time.time()
@@ -393,35 +420,36 @@ class ComputerActionExecutor:
 
         try:
             if platform.system() == "Windows":
-                # Inject UTF-8 output encoding for PowerShell 5.1
-                # (default is system locale = GBK on Chinese Windows)
-                ps_command = (
-                    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-                    "$OutputEncoding = [System.Text.Encoding]::UTF8; "
-                    f"{command}"
+                # Run through Git-for-Windows bash: the model emits bash far more
+                # reliably than PowerShell, and routing every platform through bash
+                # keeps behaviour uniform. [bash, "-c", cmd] handles a bash path
+                # with spaces (C:\Program Files\Git\...) without shell=True.
+                bash = _find_windows_bash()
+                if not bash:
+                    return {
+                        "ok": False,
+                        "message": (
+                            "Error: no bash interpreter found. This client runs commands "
+                            "through bash on Windows. Install Git for Windows (provides "
+                            "bash.exe) or set the AGENT_SHELL environment variable to a "
+                            "bash path."
+                        ),
+                        "meta": {"action": "bash", "command": command, "elapsed_time": time.time() - start_time},
+                        "is_bash": True,
+                    }
+                env = os.environ.copy()
+                env["PYTHONUTF8"] = "1"
+                env["PYTHONIOENCODING"] = "utf-8"
+                result = subprocess.run(
+                    [bash, "-c", command],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30,
+                    cwd=os.path.expanduser("~"),
+                    env=env,
                 )
-                # Try PowerShell first
-                try:
-                    result = subprocess.run(
-                        ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_command],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=30,
-                        cwd=os.path.expanduser("~"),
-                    )
-                except FileNotFoundError:
-                    # PowerShell not found, fallback to cmd
-                    result = subprocess.run(
-                        ["cmd", "/c", command],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=30,
-                        cwd=os.path.expanduser("~"),
-                    )
             else:
                 result = subprocess.run(
                     command,
