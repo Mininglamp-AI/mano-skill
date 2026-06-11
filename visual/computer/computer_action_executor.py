@@ -429,10 +429,13 @@ class ComputerActionExecutor:
                     return {
                         "ok": False,
                         "message": (
-                            "Error: no bash interpreter found. This client runs commands "
-                            "through bash on Windows. Install Git for Windows (provides "
-                            "bash.exe) or set the AGENT_SHELL environment variable to a "
-                            "bash path."
+                            "No bash interpreter is available on this Windows machine, so the "
+                            "bash tool cannot run. For the current task, fall back to the computer "
+                            "tool and complete it through GUI operations (clicking, typing, etc.) "
+                            "instead. For future tasks, installing Git for Windows (which provides "
+                            "bash.exe) — or pointing the AGENT_SHELL environment variable at an "
+                            "existing bash — is highly recommended, as the bash tool is far faster "
+                            "and more reliable than GUI automation for file and system operations."
                         ),
                         "meta": {"action": "bash", "command": command, "elapsed_time": time.time() - start_time},
                         "is_bash": True,
@@ -476,7 +479,14 @@ class ComputerActionExecutor:
         except subprocess.TimeoutExpired:
             return {
                 "ok": False,
-                "message": f"Error: Command timed out after 30 seconds",
+                "message": (
+                    f"Command `{command}` exceeded the 30s timeout and was terminated. "
+                    "This usually means it is a long-running command (e.g. `pip install`, "
+                    "a large download, or a build). You have two options: (1) fall back to "
+                    "the computer tool and accomplish the same goal through GUI operations; "
+                    "or (2) stop the task now, run this command manually in a terminal, then "
+                    "rerun the task once it has finished."
+                ),
                 "meta": {"action": "bash", "command": command, "elapsed_time": time.time() - start_time},
                 "is_bash": True,
             }
