@@ -298,7 +298,9 @@ class ComputerActionExecutor:
             env["LC_ALL"] = "en_US.UTF-8"
             subprocess.run(["pbcopy"], input=text.encode("utf-8"), env=env, check=True)
         elif system == "Windows":
-            subprocess.run(["clip"], input=text.encode("utf-16le"), check=True)
+            # clip.exe expects UTF-16 with BOM; utf-16le alone is misread as ANSI on
+            # localized Windows and pastes mojibake into Search / text fields.
+            subprocess.run(["clip"], input=text.encode("utf-16"), check=True)
         else:
             subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode("utf-8"), check=True)
 
