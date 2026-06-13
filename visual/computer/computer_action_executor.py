@@ -1,7 +1,9 @@
 import os
 import platform
 import shutil
+import signal
 import subprocess
+import tempfile
 import time
 from typing import Any, Dict
 
@@ -38,6 +40,84 @@ def _find_windows_bash():
         if cand and os.path.isfile(cand):
             return cand
     return None
+
+
+_IS_WINDOWS = os.name == "nt"
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill the whole process tree led by proc (best effort, then force).
+
+    On timeout we must reap not just the shell but every descendant it spawned —
+    otherwise GUI/long-lived grandchildren (e.g. `start notepad`, `sleep 30 &`)
+    survive as orphans. POSIX: signal the process group. Windows: taskkill /T.
+    """
+    if _IS_WINDOWS:
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True, timeout=10,
+            )
+        except Exception:  # noqa: BLE001 - fall back to killing just the shell
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        return
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=3)  # grace period for clean shutdown
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        os.killpg(pgid, signal.SIGKILL)  # force the stragglers
+    except ProcessLookupError:
+        pass
+
+
+def _run_shell_capture(argv, *, cwd, env, timeout):
+    """Run argv, capturing stdout+stderr to a temp FILE (not a PIPE).
+
+    Why a file instead of subprocess.run(capture_output=True): a PIPE is shared
+    with every descendant that inherits the fd, so a long-lived grandchild (a GUI
+    app launched via `start`/`open`, a backgrounded `&` job) keeps the pipe open
+    and the parent's read blocks until that grandchild exits — making `timeout`
+    useless (the real mano-cua Windows bash hang). Writing to a file fd instead
+    means the parent never reads a pipe: it just waits for the SHELL to exit, so
+    control returns the instant the shell is done even if it left GUI children
+    running. Mirrors Claude Code (stdio -> file fd, wait on 'exit' not 'close').
+
+    Returns (returncode, output_text). On timeout, kills the whole process tree
+    and re-raises subprocess.TimeoutExpired.
+    """
+    popen_kwargs = dict(cwd=cwd, env=env)
+    if _IS_WINDOWS:
+        # New process group so taskkill /T can reach the whole tree on timeout.
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        # New session => child leads its own process group; killpg hits the tree.
+        popen_kwargs["start_new_session"] = True
+
+    with tempfile.TemporaryFile(mode="w+b") as out:
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                                stdout=out, stderr=out, **popen_kwargs)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_process_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+        out.seek(0)
+        output = out.read().decode("utf-8", errors="replace")
+        return proc.returncode, output
 
 
 class ComputerActionExecutor:
@@ -443,44 +523,36 @@ class ComputerActionExecutor:
                 env = os.environ.copy()
                 env["PYTHONUTF8"] = "1"
                 env["PYTHONIOENCODING"] = "utf-8"
-                result = subprocess.run(
-                    [bash, "-c", command],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=30,
-                    cwd=os.path.expanduser("~"),
-                    env=env,
-                )
+                argv = [bash, "-c", command]
             else:
-                result = subprocess.run(
-                    command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    cwd=os.path.expanduser("~"),
-                )
-            output = result.stdout
-            if result.stderr:
-                output += f"\n[stderr]\n{result.stderr}"
+                env = os.environ.copy()
+                argv = ["/bin/sh", "-c", command]
+
+            # Capture to a temp file (not a PIPE) and wait on the shell only, so a
+            # command that launches a GUI / background process (`start notepad`,
+            # `open -a`, `foo &`) returns immediately instead of hanging until the
+            # grandchild exits or the timeout fires. See _run_shell_capture.
+            returncode, output = _run_shell_capture(
+                argv, cwd=os.path.expanduser("~"), env=env, timeout=30,
+            )
+
             # Truncate large output
             if len(output) > 10000:
                 output = output[:10000] + f"\n\n... Output truncated ({len(output)} total chars) ..."
-            ok = result.returncode == 0
+            ok = returncode == 0
             dt = time.time() - start_time
             return {
                 "ok": ok,
-                "message": output if output else ("Success" if ok else f"Exit code: {result.returncode}"),
-                "meta": {"action": "bash", "command": command, "exit_code": result.returncode, "elapsed_time": dt},
+                "message": output if output.strip() else ("Success" if ok else f"Exit code: {returncode}"),
+                "meta": {"action": "bash", "command": command, "exit_code": returncode, "elapsed_time": dt},
                 "is_bash": True,
             }
         except subprocess.TimeoutExpired:
             return {
                 "ok": False,
                 "message": (
-                    f"Command `{command}` exceeded the 30s timeout and was terminated. "
+                    f"Command `{command}` exceeded the 30s timeout and was terminated "
+                    "(its whole process tree was killed). "
                     "This usually means it is a long-running command (e.g. `pip install`, "
                     "a large download, or a build). You have two options: (1) fall back to "
                     "the computer tool and accomplish the same goal through GUI operations; "
